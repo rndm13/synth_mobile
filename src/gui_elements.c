@@ -1,0 +1,126 @@
+#include "gui_elements.h"
+#include <raymath.h>
+
+// Draws a rotary knob and updates the value if the user interacts with it.
+// Returns true if the value was modified this frame.
+bool DrawKnob(const char *label, Vector2 topLeft, float radius, float *value, float minValue, float maxValue) {
+    bool valueChanged = false;
+
+    // Define the visual arc limits in degrees.
+    // In raylib, 0 is right, 90 is down.
+    // 135 is bottom-left. 405 is bottom-right (360 + 45).
+    const float startAngle = 135.0f;
+    const float endAngle = 405.0f;
+    const float angleRange = endAngle - startAngle;
+
+    // 1. Handle Input
+    Vector2 mousePos = GetMousePosition();
+    Vector2 center = {topLeft.x + KNOB_RADIUS, topLeft.y + FONT_SIZE + GUI_GAP + KNOB_RADIUS} ;
+
+    // Check if mouse is held down and within the knob's radius
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointCircle(mousePos, center, radius)) {
+
+        // Calculate angle between center and mouse
+        float dx = mousePos.x - center.x;
+        float dy = mousePos.y - center.y;
+        float angle = atan2f(dy, dx) * RAD2DEG; // Returns -180 to +180
+
+        // Unwrap the angle so the "dead zone" seam is at 90 degrees (straight down)
+        // This maps the -180...180 range to 90...450 smoothly.
+        if (angle < 90.0f) {
+            angle += 360.0f;
+        }
+
+        // Clamp the angle to our visual limits so it doesn't spin freely through the bottom
+        if (angle < startAngle) angle = startAngle;
+        if (angle > endAngle) angle = endAngle;
+
+        // Map the angle back to a percentage (0.0 to 1.0) and then to the value range
+        float percent = (angle - startAngle) / angleRange;
+        float newValue = minValue + percent * (maxValue - minValue);
+
+        if (*value != newValue) {
+            *value = newValue;
+            valueChanged = true;
+        }
+    }
+
+    // 2. Draw the visual components
+    // Draw the background base
+    DrawText(label, topLeft.x, topLeft.y, FONT_SIZE, TEXT_COLOR);
+    DrawCircleV(center, radius, KNOB_INNER_COLOR);
+    DrawCircleLines(center.x, center.y, radius, KNOB_OUTER_COLOR);
+
+    // Calculate where the indicator should point based on the CURRENT value
+    float currentPercent = 0.0f;
+    if (maxValue > minValue) {
+        currentPercent = (*value - minValue) / (maxValue - minValue);
+    }
+
+    // Convert the percentage back into radians for drawing
+    float currentAngle = startAngle + (currentPercent * angleRange);
+    float radianAngle = currentAngle * DEG2RAD;
+
+    // Calculate the position of the indicator dot using sine and cosine
+    Vector2 indicatorPos = {
+        center.x + cosf(radianAngle) * (radius - KNOB_INDICATOR_OFF), // 10 pixels inset from the edge
+        center.y + sinf(radianAngle) * (radius - KNOB_INDICATOR_OFF)
+    };
+
+    // Draw the indicator dot
+    DrawCircleV(indicatorPos, KNOB_INDICATOR_SIZE, KNOB_INDICATOR_COLOR);
+
+    return valueChanged;
+}
+
+bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIndex) {
+    bool indexChanged = false;
+    float tabWidth = bounds.width / count;
+    Vector2 mousePos = GetMousePosition();
+
+    for (int i = 0; i < count; i++) {
+        // Calculate the rectangle for this specific tab
+        Rectangle tabRec = {
+            bounds.x + (i * tabWidth),
+            bounds.y,
+            tabWidth,
+            bounds.height
+        };
+
+        bool isHovering = CheckCollisionPointRec(mousePos, tabRec);
+        bool isActive = (*activeIndex == i);
+
+        // Logic: Update index on click
+        if (isHovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (*activeIndex != i) {
+                *activeIndex = i;
+                indexChanged = true;
+            }
+        }
+
+        // --- Visuals ---
+        // Draw background: Use a darker color for inactive, lighter for active
+        Color bgColor = isActive ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR;
+        if (isHovering && !isActive) bgColor = TAB_HOVERING_COLOR;
+
+        DrawRectangleRec(tabRec, bgColor);
+
+        // Draw an outline for the tab
+        DrawRectangleLinesEx(tabRec, 1.0f, TAB_OUTER_COLOR);
+
+        // Draw an accent line at the top for the active tab
+        if (isActive) {
+            DrawRectangle(tabRec.x, tabRec.y, tabRec.width, 3, TAB_ACCENT_LINE_COLOR);
+        }
+
+        // Center the text inside the tab
+        int textWidth = MeasureText(labels[i], FONT_SIZE);
+        DrawText(labels[i],
+                 tabRec.x + (tabWidth / 2) - (textWidth / 2),
+                 tabRec.y + (tabRec.height / 2) - (FONT_SIZE / 2),
+                 FONT_SIZE,
+                 isActive ? TEXT_COLOR : TEXT_INACTIVE_COLOR);
+    }
+
+    return indexChanged;
+}

@@ -1,6 +1,7 @@
 #include "raylib.h"
 #include <math.h>
-#include <string.h>
+
+#include "gui_elements.h"
 
 #define ARRAY_SIZE(X) (sizeof(X) / sizeof(*(X)))
 
@@ -20,10 +21,16 @@
 #define BUFFER_SIZE 4096
 #define SAMPLE_RATE 44100
 
-#define FONT_SIZE 20
-#define MAX_TOUCH_POINTS 10
-
 #define MAX_VELOCITY 80.0f
+
+#define X_ENUM(v, s) \
+    v,
+
+#define X_STR_ARR(v, s) \
+    s,
+
+#define X_STR_CASE(v, s) \
+    case v: return s;
 
 typedef struct Key {
     Vector2 pos;
@@ -43,9 +50,21 @@ typedef struct Osc {
     float buffer[BUFFER_SIZE];
 } Osc;
 
+#define TAB_X(X)                \
+    X(TAB_SYNTH, "Synth")       \
+    X(TAB_OSC,   "Oscillators") \
+    X(TAB_ENV,   "Envelopes")   \
+    X(TAB_FLT,   "Filters")     \
+    X(TAB_KEYS,  "Keys")        \
+
+typedef enum Tab {
+    TAB_X(X_ENUM)
+} Tab;
+
 typedef struct Synth {
     int screen_w;
     int screen_h;
+    Tab cur_tab;
 
     Key key_arr[KEY_COUNT];
 
@@ -55,6 +74,8 @@ typedef struct Synth {
 
     float amp;
     float pan;
+
+
     float buffer[BUFFER_SIZE];
     AudioStream stream;
 } Synth;
@@ -79,10 +100,10 @@ bool key_is_black(int k) {
 }
 
 void prepare_key_pos() {
-    const float k_w = 40;
-    const float k_ws = 10;
-    const float k_h = 100;
-    const float k_hs = 10;
+    const float k_w = KEY_WIDTH;
+    const float k_ws = GUI_GAP;
+    const float k_h = KEY_HEIGHT;
+    const float k_hs = GUI_GAP;
     float k_x = k_ws;
 
     const float black_y = g_s.screen_h - 2 * (k_hs + k_h);
@@ -129,7 +150,6 @@ void prepare_audio() {
     SetAudioStreamBufferSizeDefault(BUFFER_SIZE);
     // Init raw audio stream (sample rate: 44100, sample size: 32bit-float, channels: 1-mono)
     g_s.stream = LoadAudioStream(SAMPLE_RATE, 32, 1);
-    g_s.pan = 0.0f;
     SetAudioStreamPan(g_s.stream, g_s.pan);
     PlayAudioStream(g_s.stream);
 }
@@ -137,7 +157,10 @@ void prepare_audio() {
 void init_synth() {
     g_s.screen_w = GetScreenWidth();
     g_s.screen_h = GetScreenHeight();
+
+    g_s.cur_tab = TAB_KEYS;
     g_s.amp = 0.2;
+    g_s.pan = 0.0f;
 
     prepare_keys();
     prepare_voices();
@@ -297,7 +320,7 @@ void update_stream() {
         g_s.buffer[i] = g_s.amp * g_s.osc.buffer[i];
     }
 
-    UpdateAudioStream(g_s.stream, g_s.osc.buffer, BUFFER_SIZE);
+    UpdateAudioStream(g_s.stream, g_s.buffer, BUFFER_SIZE);
 }
 
 void draw_freq() {
@@ -326,8 +349,8 @@ void draw_wave() {
             continue;
         }
 
-        Vector2 s_pos = { i, 250 - 50 * g_s.buffer[si] };
-        Vector2 e_pos = { i + 1, 250 - 50 * g_s.buffer[ei] };
+        Vector2 s_pos = { i, 200 - 50 * g_s.buffer[si] };
+        Vector2 e_pos = { i + 1, 200 - 50 * g_s.buffer[ei] };
 
         DrawLineV(s_pos, e_pos, RED);
     }
@@ -341,15 +364,15 @@ void draw_keys() {
         r.width = g_s.key_arr[i].size.x;
         r.height = g_s.key_arr[i].size.y;
 
-        Color k_color = WHITE;
+        Color k_color = KEY_WHITE_COLOR;
         Color t_color = BLACK;
         if (key_is_black(i)) {
-            k_color = BLACK;
+            k_color = KEY_BLACK_COLOR;
             t_color = WHITE;
         }
 
         DrawRectangleRec(r, k_color);
-        DrawRectangleLinesEx(r, 5, BLACK);
+        DrawRectangleLinesEx(r, 5, KEY_OUTER_COLOR);
         DrawText(
                 TextFormat("%d", i),
                 g_s.key_arr[i].pos.x + 5,
@@ -359,10 +382,66 @@ void draw_keys() {
 }
 
 void draw_fps() {
-        DrawText(
-                TextFormat("FPS: %d", GetFPS()),
-                g_s.screen_w - 100, 10,
-                FONT_SIZE, GREEN);
+    DrawText(
+            TextFormat("FPS: %d", GetFPS()),
+            g_s.screen_w - 100, 10,
+            FONT_SIZE, GREEN);
+}
+
+void draw_tab_synth() {
+    Vector2 cursor_p = {GUI_GAP, TAB_H + GUI_GAP};
+    DrawKnob("Amp", cursor_p, KNOB_RADIUS, &g_s.amp, 0.0f, 1.0f);
+    cursor_p.y += KNOB_SIZE_H;
+    if (DrawKnob("Pan", cursor_p, KNOB_RADIUS, &g_s.pan, 0.0f, 1.0f)) {
+        SetAudioStreamPan(g_s.stream, g_s.pan);
+    }
+}
+
+void draw_tab_keys() {
+    draw_freq();
+    draw_wave();
+    draw_keys();
+}
+
+void process_ui() {
+    process_screen();
+
+    switch (g_s.cur_tab) {
+    case TAB_SYNTH:
+        break;
+    case TAB_OSC:
+        break;
+    case TAB_ENV:
+        break;
+    case TAB_FLT:
+        break;
+    case TAB_KEYS:
+        process_keys();
+        break;
+    }
+}
+
+void draw_ui() {
+    Rectangle tab_r = {GUI_GAP, GUI_GAP, g_s.screen_w - 2 * GUI_GAP, TAB_H};
+    const char* tab_l[] = {
+        TAB_X(X_STR_ARR)
+    };
+
+    DrawTabMenu(tab_r, tab_l, ARRAY_SIZE(tab_l), (int*)&g_s.cur_tab);
+    switch (g_s.cur_tab) {
+    case TAB_SYNTH:
+        draw_tab_synth();
+        break;
+    case TAB_OSC:
+        break;
+    case TAB_ENV:
+        break;
+    case TAB_FLT:
+        break;
+    case TAB_KEYS:
+        draw_tab_keys();
+        break;
+    }
 }
 
 int main(void) {
@@ -375,8 +454,7 @@ int main(void) {
     while (!WindowShouldClose())
     {
         // Process
-        process_screen();
-        process_keys(); // Set new keys
+        process_ui();
 
         // Update
         update_osc();
@@ -384,11 +462,9 @@ int main(void) {
 
         // Draw
         BeginDrawing();
-            ClearBackground(RAYWHITE);
+            ClearBackground(BG_COLOR);
 
-            draw_wave();
-            draw_freq();
-            draw_keys();
+            draw_ui();
             draw_fps();
         EndDrawing();
     }
