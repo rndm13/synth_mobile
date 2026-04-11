@@ -483,12 +483,12 @@ void draw_fps() {
 
 void draw_tab_synth() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
-    DrawKnob("Amp", cursor_p, KNOB_RADIUS, &g_s.amp, 0.0f, 1.0f);
-    cursor_p.y += KNOB_SIZE_H;
-    if (DrawKnob("Pan", cursor_p, KNOB_RADIUS, &g_s.pan, 0.0f, 1.0f)) {
+    SetDir(GD_HORIZONTAL);
+
+    DrawKnob("Amp", &cursor_p, KNOB_RADIUS, &g_s.amp, 0.0f, 1.0f);
+    if (DrawKnob("Pan", &cursor_p, KNOB_RADIUS, &g_s.pan, 0.0f, 1.0f)) {
         SetAudioStreamPan(g_s.stream, g_s.pan);
     }
-    cursor_p.y += KNOB_SIZE_H;
 }
 
 void draw_tab_keys() {
@@ -500,14 +500,11 @@ void draw_tab_keys() {
 void draw_tab_env() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
 
-    DrawKnob("Attack", cursor_p, KNOB_RADIUS, &g_s.env.attack, ENV_A_MIN, 1.0f);
-    cursor_p.y += KNOB_SIZE_H;
-    DrawKnob("Decay", cursor_p, KNOB_RADIUS, &g_s.env.decay, 0.0f, 1.0f);
-    cursor_p.y += KNOB_SIZE_H;
-    DrawKnob("Sustain", cursor_p, KNOB_RADIUS, &g_s.env.sustain, ENV_R_MIN, 1.0f);
-    cursor_p.y += KNOB_SIZE_H;
-    DrawKnob("Release", cursor_p, KNOB_RADIUS, &g_s.env.release, 0.0f, 1.0f);
-    cursor_p.y += KNOB_SIZE_H;
+    SetDir(GD_HORIZONTAL);
+    DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &g_s.env.attack, ENV_A_MIN, 1.0f);
+    DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &g_s.env.decay, 0.0f, 1.0f);
+    DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &g_s.env.sustain, ENV_R_MIN, 1.0f);
+    DrawKnob("Release", &cursor_p, KNOB_RADIUS, &g_s.env.release, 0.0f, 1.0f);
 }
 
 void process_ui() {

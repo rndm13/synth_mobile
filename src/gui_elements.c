@@ -1,9 +1,15 @@
 #include "gui_elements.h"
 #include <raymath.h>
 
+static GuiDirection g_dir = GD_VERTICAL;
+
+void SetDir(GuiDirection dir) {
+    g_dir = dir;
+}
+
 // Draws a rotary knob and updates the value if the user interacts with it.
 // Returns true if the value was modified this frame.
-bool DrawKnob(const char *label, Vector2 topLeft, float radius, float *value, float minValue, float maxValue) {
+bool DrawKnob(const char *label, Vector2* cursor, float radius, float *value, float minValue, float maxValue) {
     bool valueChanged = false;
 
     // Define the visual arc limits in degrees.
@@ -15,7 +21,7 @@ bool DrawKnob(const char *label, Vector2 topLeft, float radius, float *value, fl
 
     // 1. Handle Input
     Vector2 mousePos = GetMousePosition();
-    Vector2 center = {topLeft.x + KNOB_RADIUS, topLeft.y + FONT_SIZE + GUI_GAP + KNOB_RADIUS} ;
+    Vector2 center = {cursor->x + KNOB_RADIUS, cursor->y + FONT_SIZE + GUI_GAP + KNOB_RADIUS} ;
 
     // Check if mouse is held down and within the knob's radius
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointCircle(mousePos, center, radius)) {
@@ -47,7 +53,9 @@ bool DrawKnob(const char *label, Vector2 topLeft, float radius, float *value, fl
 
     // 2. Draw the visual components
     // Draw the background base
-    DrawText(label, topLeft.x, topLeft.y, FONT_SIZE, TEXT_COLOR);
+    int textWidth = MeasureText(label, FONT_SIZE);
+    DrawText(label, cursor->x, cursor->y, FONT_SIZE, TEXT_COLOR);
+    DrawText(TextFormat("%.2f", *value), cursor->x, center.y + radius + GUI_GAP , FONT_SIZE, TEXT_COLOR);
     DrawCircleV(center, radius, KNOB_INNER_COLOR);
     DrawCircleLines(center.x, center.y, radius, KNOB_OUTER_COLOR);
 
@@ -69,6 +77,12 @@ bool DrawKnob(const char *label, Vector2 topLeft, float radius, float *value, fl
 
     // Draw the indicator dot
     DrawCircleV(indicatorPos, KNOB_INDICATOR_SIZE, KNOB_INDICATOR_COLOR);
+
+    if (g_dir == GD_HORIZONTAL) {
+        cursor->x += fmax(textWidth + GUI_GAP, KNOB_SIZE_W);
+    } else {
+        cursor->y += KNOB_SIZE_H;
+    }
 
     return valueChanged;
 }
