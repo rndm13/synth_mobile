@@ -1,9 +1,11 @@
 #include "raylib.h"
 #include <math.h>
+#include <stddef.h>
 
 #include "gui_elements.h"
 
 #define ARRAY_SIZE(X) (sizeof(X) / sizeof(*(X)))
+#define WAVE_DISPLAY_BUFFER_SIZE 256
 
 #define ENV_A_MIN 0.05f
 #define ENV_R_MIN 0.05f
@@ -58,8 +60,24 @@ typedef struct Env {
     float release;
 } Env;
 
+#define OSC_TYPE_X(X)           \
+    X(OT_SINE, "Sine")          \
+    X(OT_TRIANGLE, "Triangle")  \
+    X(OT_SQUARE, "Square")      \
+    X(OT_SAW, "Sawtooth")       \
+
+typedef enum OscType {
+    OSC_TYPE_X(X_ENUM)
+    OT_MAX,
+} OscType;
+
 typedef struct Osc {
+    OscType type;
+    int semi;
+    int pitch;
+
     float buffer[BUFFER_SIZE];
+    float disp_buffer[WAVE_DISPLAY_BUFFER_SIZE];
 } Osc;
 
 #define TAB_X(X)                \
@@ -141,6 +159,25 @@ bool key_is_black(int k) {
     return false;
 }
 
+float get_osc_kernel(int wave_idx, int wave_length) {
+    switch (g_s.osc.type) {
+        case OT_SINE:
+            return sin(2 * PI * wave_idx / wave_length);
+            break;
+        case OT_TRIANGLE:
+            return 2 * fabs(2 * wave_idx / (float)wave_length - 1.0f) - 1.0f;
+            break;
+        case OT_SQUARE:
+            return (wave_idx / (float)wave_length > 0.5f) ? -1.0f : 1.0f;
+            break;
+        case OT_SAW:
+            return 2 * wave_idx / (float)wave_length - 1.0f;
+            break;
+    }
+
+    return 0.0f;
+}
+
 void prepare_key_pos() {
     const float k_w = KEY_WIDTH;
     const float k_ws = GUI_GAP;
@@ -196,18 +233,30 @@ void prepare_audio() {
     PlayAudioStream(g_s.stream);
 }
 
+void prepare_osc_display_buffer() {
+    int wave_length = ARRAY_SIZE(g_s.osc.disp_buffer);
+    for (int i = 0; i < wave_length; i++) {
+        g_s.osc.disp_buffer[i] = get_osc_kernel(i, wave_length);
+    }
+}
+
 void init_synth() {
     g_s.screen_w = GetScreenWidth();
     g_s.screen_h = GetScreenHeight();
 
     g_s.cur_tab = TAB_KEYS;
     g_s.amp = 0.2;
-    g_s.pan = 0.0f;
+    g_s.pan = 0.5f;
 
     g_s.env.attack = ENV_A_MIN;
     g_s.env.decay = 0.00f;
     g_s.env.sustain = 1.0f;
     g_s.env.release = ENV_R_MIN;
+
+    g_s.osc.type = OT_SINE;
+    g_s.osc.semi = 0;
+    g_s.osc.pitch = 0;
+    prepare_osc_display_buffer();
 
     prepare_keys();
     prepare_voices();
@@ -383,17 +432,18 @@ void update_osc() {
         float env_mul = 0.0f;
 
         for (int j = 0; j < BUFFER_SIZE; j++) {
-            float dt = j / (float)SAMPLE_RATE;
             float wave_length = SAMPLE_RATE / wave_freq;
+            float dt = j / (float)SAMPLE_RATE;
+            float kernel = get_osc_kernel(g_s.voice_arr[i].wave_idx, wave_length);
+
             env_mul = get_env_value(
                     g_s.voice_arr[i].time + dt,
                     g_s.voice_arr[i].released,
                     g_s.voice_arr[i].release_time,
                     g_s.env);
 
-            // TODO: Calculate time based on sample rate?
             // TODO: Mixer
-            g_s.osc.buffer[j] += env_mul * vel_mul * sin(2 * PI * g_s.voice_arr[i].wave_idx / wave_length);
+            g_s.osc.buffer[j] += env_mul * vel_mul * kernel;
             g_s.voice_arr[i].wave_idx++;
             if (g_s.voice_arr[i].wave_idx >= wave_length) {
                 g_s.voice_arr[i].wave_idx = 0;
@@ -428,24 +478,6 @@ void draw_voice_arr() {
                     wave_freq, key_idx, rel_time),
                 10, 10 + FONT_SIZE * i,
                 FONT_SIZE, RED);
-    }
-}
-
-void draw_wave() {
-    for (int i = 0; i < g_s.screen_w - 1; i++) {
-        int si = i * BUFFER_SIZE / g_s.screen_w;
-        int ei = (i + 1) * BUFFER_SIZE / g_s.screen_w;
-        if (si < 0 || si > BUFFER_SIZE) {
-            continue;
-        }
-        if (ei < 0 || ei > BUFFER_SIZE) {
-            continue;
-        }
-
-        Vector2 s_pos = { i, 200 - 50 * g_s.buffer[si] };
-        Vector2 e_pos = { i + 1, 200 - 50 * g_s.buffer[ei] };
-
-        DrawLineV(s_pos, e_pos, RED);
     }
 }
 
@@ -491,12 +523,6 @@ void draw_tab_synth() {
     }
 }
 
-void draw_tab_keys() {
-    draw_voice_arr();
-    draw_wave();
-    draw_keys();
-}
-
 void draw_tab_env() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
 
@@ -505,6 +531,29 @@ void draw_tab_env() {
     DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &g_s.env.decay, 0.0f, 1.0f);
     DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &g_s.env.sustain, ENV_R_MIN, 1.0f);
     DrawKnob("Release", &cursor_p, KNOB_RADIUS, &g_s.env.release, 0.0f, 1.0f);
+}
+
+void draw_tab_osc() {
+    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
+    Vector2 wave_s = {500, WAVE_SIZE_H};
+
+    SetDir(GD_VERTICAL);
+    if (DrawWave(&cursor_p, wave_s, g_s.osc.disp_buffer, ARRAY_SIZE(g_s.osc.disp_buffer))) {
+        g_s.osc.type++;
+        g_s.osc.type %= OT_MAX;
+        prepare_osc_display_buffer();
+    }
+
+    SetDir(GD_HORIZONTAL);
+}
+
+void draw_tab_keys() {
+    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
+    Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
+
+    draw_voice_arr();
+    DrawWave(&cursor_p, wave_s, g_s.buffer, BUFFER_SIZE);
+    draw_keys();
 }
 
 void process_ui() {
@@ -537,6 +586,7 @@ void draw_ui() {
         draw_tab_synth();
         break;
     case TAB_OSC:
+        draw_tab_osc();
         break;
     case TAB_ENV:
         draw_tab_env();
@@ -550,7 +600,7 @@ void draw_ui() {
 }
 
 int main(void) {
-    InitWindow(800, 450, "Synth");
+    InitWindow(WIN_SIZE_W, WIN_SIZE_H, "Synth");
 
     init_synth();
 

@@ -138,3 +138,30 @@ bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIn
 
     return indexChanged;
 }
+
+bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size) {
+    DrawRectangle(cursor->x, cursor->y, size.x, size.y, WAVE_INNER_COLOR);
+    DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, WAVE_OUTER_COLOR);
+    Rectangle rec = {cursor->x, cursor->y, size.x, size.y};
+
+    for (int i = 0; i < size.x - 1; i++) {
+        int si = i * buf_size / size.x;
+        int ei = (i + 1) * buf_size / size.x;
+
+        Vector2 s_pos = { cursor->x + i, cursor->y + size.y / 2 - size.y * buffer[si] / 2.1f };
+        Vector2 e_pos = { cursor->x + i + 1, cursor->y + size.y / 2 - size.y * buffer[ei] / 2.1f };
+
+        DrawLineV(s_pos, e_pos, WAVE_LINE_COLOR);
+    }
+
+    if (g_dir == GD_HORIZONTAL) {
+        cursor->x += size.x + GUI_GAP;
+    } else {
+        cursor->y += size.y + GUI_GAP;
+    }
+
+    bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
+    bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
+
+    return clicked;
+}
