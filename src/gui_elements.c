@@ -87,6 +87,17 @@ bool DrawKnob(const char *label, Vector2* cursor, float radius, float *value, fl
     return valueChanged;
 }
 
+bool DrawKnobI(const char *label, Vector2* cursor, float radius, int *value, int minValue, int maxValue) {
+    float f_value = *value;
+
+    bool changed = DrawKnob(label, cursor, radius, &f_value, minValue, maxValue);
+    if (changed) {
+        *value = round(f_value);
+    }
+
+    return changed;
+}
+
 bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIndex) {
     bool indexChanged = false;
     float tabWidth = bounds.width / count;

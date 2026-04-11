@@ -52,5 +52,6 @@ typedef enum GuiDirection {
 void SetDir(GuiDirection dir);
 
 bool DrawKnob(const char* label, Vector2 *cursor, float radius, float *value, float minValue, float maxValue);
+bool DrawKnobI(const char* label, Vector2 *cursor, float radius, int *value, int minValue, int maxValue);
 bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIndex);
 bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size);

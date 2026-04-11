@@ -7,17 +7,19 @@
 #define ARRAY_SIZE(X) (sizeof(X) / sizeof(*(X)))
 #define WAVE_DISPLAY_BUFFER_SIZE 256
 
+#define OSC_SEMI_RANGE 12
+
 #define ENV_A_MIN 0.05f
 #define ENV_R_MIN 0.05f
 
-#define KEY_COUNT 88
-#define KEY_OCTAVE 12
+#define KEY_C_OFF    4
+#define OCTAVE_COUNT 8
+#define KEY_OCTAVE   12
+#define KEY_COUNT    (KEY_C_OFF + KEY_OCTAVE * OCTAVE_COUNT)
 
 #define KEY_A4_IDX  49
 #define KEY_A4_FREQ 440.0f
 #define KEY_C4_IDX  (KEY_A4_IDX - 9)
-#define KEY_C_OFF   4
-#define KEY_OFF     KEY_C4_IDX
 
 #define KEY_MAX_VOICES 8
 
@@ -74,7 +76,6 @@ typedef enum OscType {
 typedef struct Osc {
     OscType type;
     int semi;
-    int pitch;
 
     float buffer[BUFFER_SIZE];
     float disp_buffer[WAVE_DISPLAY_BUFFER_SIZE];
@@ -94,8 +95,10 @@ typedef enum Tab {
 typedef struct Synth {
     int screen_w;
     int screen_h;
+
     Tab cur_tab;
 
+    int cur_octave;
     Key key_arr[KEY_COUNT];
 
     Voice voice_arr[KEY_MAX_VOICES];
@@ -173,6 +176,8 @@ float get_osc_kernel(int wave_idx, int wave_length) {
         case OT_SAW:
             return 2 * wave_idx / (float)wave_length - 1.0f;
             break;
+        default:
+            break;
     }
 
     return 0.0f;
@@ -188,16 +193,23 @@ void prepare_key_pos() {
     const float black_y = g_s.screen_h - 2 * (k_hs + k_h);
     const float white_y = g_s.screen_h - 1 * (k_hs + k_h);
 
-    for (int i = 0; i < 2 * KEY_OCTAVE; i++) {
-        g_s.key_arr[i + KEY_OFF].size.x = k_w;
-        g_s.key_arr[i + KEY_OFF].size.y = k_h;
+    for (int i = 0; i < ARRAY_SIZE(g_s.key_arr); i++) {
+        g_s.key_arr[i].pos.x = 0;
+        g_s.key_arr[i].pos.y = 0;
+        g_s.key_arr[i].size.x = 0;
+        g_s.key_arr[i].size.y = 0;
+    }
 
-        if (key_is_black(i + KEY_OFF)) {
-            g_s.key_arr[i + KEY_OFF].pos.x = k_x - (k_w + k_ws) / 2;
-            g_s.key_arr[i + KEY_OFF].pos.y = black_y;
+    for (int i = g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF; i < g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF + 2 * KEY_OCTAVE; i++) {
+        g_s.key_arr[i].size.x = k_w;
+        g_s.key_arr[i].size.y = k_h;
+
+        if (key_is_black(i)) {
+            g_s.key_arr[i].pos.x = k_x - (k_w + k_ws) / 2;
+            g_s.key_arr[i].pos.y = black_y;
         } else {
-            g_s.key_arr[i + KEY_OFF].pos.x = k_x;
-            g_s.key_arr[i + KEY_OFF].pos.y = white_y;
+            g_s.key_arr[i].pos.x = k_x;
+            g_s.key_arr[i].pos.y = white_y;
 
             k_x += k_w;
             k_x += k_ws;
@@ -245,6 +257,7 @@ void init_synth() {
     g_s.screen_h = GetScreenHeight();
 
     g_s.cur_tab = TAB_KEYS;
+    g_s.cur_octave = 4;
     g_s.amp = 0.2;
     g_s.pan = 0.5f;
 
@@ -255,7 +268,6 @@ void init_synth() {
 
     g_s.osc.type = OT_SINE;
     g_s.osc.semi = 0;
-    g_s.osc.pitch = 0;
     prepare_osc_display_buffer();
 
     prepare_keys();
@@ -379,7 +391,7 @@ void process_keys() {
     }
 
     for (int i = 0; i < t_count; i++) {
-        for (int k = KEY_OFF; k < KEY_OFF + 2 * KEY_OCTAVE; k++) {
+        for (int k = g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF; k < g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF + 2 * KEY_OCTAVE; k++) {
             Key key = g_s.key_arr[k];
             if (point_rect_intersection(touch_pos[i], key.pos, key.size)) {
                 hold_voice(k);
@@ -426,7 +438,13 @@ void update_osc() {
             break;
         }
 
-        int key_idx = g_s.voice_arr[i].key_idx;
+        int key_idx = g_s.voice_arr[i].key_idx + g_s.osc.semi;
+        if (key_idx < 0) {
+            key_idx = 0;
+        } else if (key_idx > KEY_COUNT) {
+            key_idx = KEY_COUNT;
+        }
+
         float wave_freq = g_s.key_arr[key_idx].freq;
         float vel_mul = g_s.voice_arr[i].velocity / MAX_VELOCITY;
         float env_mul = 0.0f;
@@ -482,7 +500,7 @@ void draw_voice_arr() {
 }
 
 void draw_keys() {
-    for (int i = KEY_OFF; i < KEY_OFF + 2 * KEY_OCTAVE; i++) {
+    for (int i = g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF; i < g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF + 2 * KEY_OCTAVE; i++) {
         Rectangle r;
         r.x = g_s.key_arr[i].pos.x;
         r.y = g_s.key_arr[i].pos.y;
@@ -545,6 +563,7 @@ void draw_tab_osc() {
     }
 
     SetDir(GD_HORIZONTAL);
+    DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &g_s.osc.semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE);
 }
 
 void draw_tab_keys() {
@@ -554,6 +573,12 @@ void draw_tab_keys() {
     draw_voice_arr();
     DrawWave(&cursor_p, wave_s, g_s.buffer, BUFFER_SIZE);
     draw_keys();
+
+    cursor_p.x = g_s.screen_w - GUI_GAP - KNOB_SIZE_W;
+    cursor_p.y = g_s.screen_h - GUI_GAP - KNOB_SIZE_H;
+    if (DrawKnobI("Octave", &cursor_p, KNOB_RADIUS, &g_s.cur_octave, 0, OCTAVE_COUNT - 2)) {
+        prepare_keys();
+    }
 }
 
 void process_ui() {
