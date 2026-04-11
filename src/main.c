@@ -10,6 +10,7 @@
 #define KEY_A4_IDX  49
 #define KEY_A4_FREQ 440.0f
 #define KEY_C4_IDX  (KEY_A4_IDX - 9)
+#define KEY_C_OFF   4
 #define KEY_OFF     KEY_C4_IDX
 
 #define KEY_MAX_VOICES 8
@@ -60,7 +61,53 @@ typedef struct Synth {
 
 Synth g_s;
 
+bool key_is_black(int k) {
+    static const int black_idx_arr[] = {
+        1, 3, 6, 8, 10
+    };
+
+    k -= KEY_C_OFF;
+    k %= KEY_OCTAVE;
+
+    for (int i = 0; i < ARRAY_SIZE(black_idx_arr); i++) {
+        if (k == black_idx_arr[i]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void prepare_key_pos() {
+    const float k_w = 40;
+    const float k_ws = 10;
+    const float k_h = 100;
+    const float k_hs = 10;
+    float k_x = k_ws;
+
+    const float black_y = g_s.screen_h - 2 * (k_hs + k_h);
+    const float white_y = g_s.screen_h - 1 * (k_hs + k_h);
+
+    for (int i = 0; i < 2 * KEY_OCTAVE; i++) {
+        g_s.key_arr[i + KEY_OFF].size.x = k_w;
+        g_s.key_arr[i + KEY_OFF].size.y = k_h;
+
+        if (key_is_black(i + KEY_OFF)) {
+            g_s.key_arr[i + KEY_OFF].pos.x = k_x - (k_w + k_ws) / 2;
+            g_s.key_arr[i + KEY_OFF].pos.y = black_y;
+        } else {
+            g_s.key_arr[i + KEY_OFF].pos.x = k_x;
+            g_s.key_arr[i + KEY_OFF].pos.y = white_y;
+
+            k_x += k_w;
+            k_x += k_ws;
+        }
+    }
+}
+
 void prepare_keys() {
+    prepare_key_pos();
+
     for (int i = 0; i < ARRAY_SIZE(g_s.key_arr); i++) {
         g_s.key_arr[i].freq = powf(2.0f, (float)(i - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
     }
@@ -90,7 +137,7 @@ void prepare_audio() {
 void init_synth() {
     g_s.screen_w = GetScreenWidth();
     g_s.screen_h = GetScreenHeight();
-    g_s.amp = 0.5;
+    g_s.amp = 0.2;
 
     prepare_keys();
     prepare_voices();
@@ -134,9 +181,21 @@ void hold_voice(int idx) {
 }
 
 void release_voice(int idx) {
+    int size = 0;
+    for (; size < ARRAY_SIZE(g_s.voice_arr); size++) {
+        if (g_s.voice_arr[size].key_idx == KEY_IDX_INVALID) {
+            break;
+        }
+    }
+
     for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
         if (g_s.voice_arr[i].key_idx == idx) {
-            reset_voice(i);
+            // Replace with the last element
+            if (size != 0) {
+                g_s.voice_arr[i] = g_s.voice_arr[size - 1];
+                reset_voice(size - 1);
+            }
+            break;
         }
     }
 }
@@ -151,19 +210,6 @@ bool point_rect_intersection(Vector2 p, Vector2 rp, Vector2 rs) {
 }
 
 void process_keys() {
-    for (int i = 0; i < 2 * KEY_OCTAVE; i++) {
-        const float k_w = 40;
-        const float k_ws = 10;
-        const float k_h = 100;
-        const float k_hs = 10;
-
-        g_s.key_arr[i + KEY_OFF].size.x = k_w;
-        g_s.key_arr[i + KEY_OFF].size.y = k_h;
-
-        g_s.key_arr[i + KEY_OFF].pos.x = i * k_w + (i + 1) * k_ws;
-        g_s.key_arr[i + KEY_OFF].pos.y = g_s.screen_h - k_hs - k_h;
-    }
-
     static Vector2 touch_pos[MAX_TOUCH_POINTS] = { 0 };
 
     int t_count = GetTouchPointCount();
@@ -270,10 +316,9 @@ void draw_freq() {
 }
 
 void draw_wave() {
-    static float buffer[BUFFER_SIZE] = {0};
-    for (int i = 0; i < g_s.screen_w / 2; i++) {
-        int si = i * BUFFER_SIZE / g_s.screen_w / 2;
-        int ei = (i + 1) * BUFFER_SIZE / g_s.screen_w / 2;
+    for (int i = 0; i < g_s.screen_w - 1; i++) {
+        int si = i * BUFFER_SIZE / g_s.screen_w;
+        int ei = (i + 1) * BUFFER_SIZE / g_s.screen_w;
         if (si < 0 || si > BUFFER_SIZE) {
             continue;
         }
@@ -281,29 +326,11 @@ void draw_wave() {
             continue;
         }
 
-        Vector2 s_pos = { i, 250 - 50 * buffer[si] };
-        Vector2 e_pos = { i + 1, 250 - 50 * buffer[ei] };
+        Vector2 s_pos = { i, 250 - 50 * g_s.buffer[si] };
+        Vector2 e_pos = { i + 1, 250 - 50 * g_s.buffer[ei] };
 
         DrawLineV(s_pos, e_pos, RED);
     }
-
-    for (int i = 0; i < g_s.screen_w / 2; i++) {
-        int si = i * BUFFER_SIZE / g_s.screen_w / 2;
-        int ei = (i + 1) * BUFFER_SIZE / g_s.screen_w / 2;
-        if (si < 0 || si > BUFFER_SIZE) {
-            continue;
-        }
-        if (ei < 0 || ei > BUFFER_SIZE) {
-            continue;
-        }
-
-        Vector2 s_pos = { i + g_s.screen_w / 2.0f, 250 - 50 * g_s.buffer[si] };
-        Vector2 e_pos = { i + 1 + g_s.screen_w / 2.0f, 250 - 50 * g_s.buffer[ei] };
-
-        DrawLineV(s_pos, e_pos, RED);
-    }
-
-    memcpy(buffer, g_s.buffer, sizeof(buffer));
 }
 
 void draw_keys() {
@@ -314,12 +341,20 @@ void draw_keys() {
         r.width = g_s.key_arr[i].size.x;
         r.height = g_s.key_arr[i].size.y;
 
+        Color k_color = WHITE;
+        Color t_color = BLACK;
+        if (key_is_black(i)) {
+            k_color = BLACK;
+            t_color = WHITE;
+        }
+
+        DrawRectangleRec(r, k_color);
         DrawRectangleLinesEx(r, 5, BLACK);
         DrawText(
-                TextFormat("%d\n%.2f", i, g_s.key_arr[i].freq),
+                TextFormat("%d", i),
                 g_s.key_arr[i].pos.x + 5,
                 g_s.key_arr[i].pos.y + g_s.key_arr[i].size.y / 2,
-                FONT_SIZE, BLACK);
+                FONT_SIZE, t_color);
     }
 }
 
