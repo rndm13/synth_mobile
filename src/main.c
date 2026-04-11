@@ -388,7 +388,7 @@ void update_osc() {
             env_mul = get_env_value(
                     g_s.voice_arr[i].time + dt,
                     g_s.voice_arr[i].released,
-                    g_s.voice_arr[i].release_time + dt,
+                    g_s.voice_arr[i].release_time,
                     g_s.env);
 
             // TODO: Calculate time based on sample rate?
@@ -423,8 +423,7 @@ void draw_voice_arr() {
         int key_idx = g_s.voice_arr[i].key_idx;
         float rel_time = g_s.voice_arr[i].release_time;
         float wave_freq = g_s.key_arr[key_idx].freq;
-        DrawText(
-                TextFormat(
+        DrawText(TextFormat(
                     "sine frequency: %.2f, key idx: %d, rel time:%.2f",
                     wave_freq, key_idx, rel_time),
                 10, 10 + FONT_SIZE * i,
