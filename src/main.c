@@ -22,6 +22,8 @@
 #define FONT_SIZE 20
 #define MAX_TOUCH_POINTS 10
 
+#define MAX_VELOCITY 80.0f
+
 typedef struct Key {
     Vector2 pos;
     Vector2 size;
@@ -29,11 +31,14 @@ typedef struct Key {
     float freq;
 } Key;
 
-typedef struct Osc {
-    int voice_key_idx[KEY_MAX_VOICES];
-
+typedef struct Voice {
+    int key_idx;
     int wave_idx;
+    int velocity;
+    float time;
+} Voice;
 
+typedef struct Osc {
     float buffer[BUFFER_SIZE];
 } Osc;
 
@@ -41,12 +46,13 @@ typedef struct Synth {
     int screen_w;
     int screen_h;
 
-    Key keys[KEY_COUNT];
+    Key key_arr[KEY_COUNT];
 
-    int voice_key_idx[KEY_MAX_VOICES];
+    Voice voice_arr[KEY_MAX_VOICES];
 
     Osc osc;
 
+    float amp;
     float pan;
     float buffer[BUFFER_SIZE];
     AudioStream stream;
@@ -55,18 +61,17 @@ typedef struct Synth {
 Synth g_s;
 
 void prepare_keys() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.keys); i++) {
-        g_s.keys[i].freq = powf(2.0f, (float)(i - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
+    for (int i = 0; i < ARRAY_SIZE(g_s.key_arr); i++) {
+        g_s.key_arr[i].freq = powf(2.0f, (float)(i - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
     }
 }
 
 void prepare_voices() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_key_idx); i++) {
-        g_s.voice_key_idx[i] = KEY_IDX_INVALID;
-    }
-
-    for (int i = 0; i < ARRAY_SIZE(g_s.osc.voice_key_idx); i++) {
-        g_s.osc.voice_key_idx[i] = KEY_IDX_INVALID;
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        g_s.voice_arr[i].key_idx = KEY_IDX_INVALID;
+        g_s.voice_arr[i].time = 0;
+        g_s.voice_arr[i].velocity = 0;
+        g_s.voice_arr[i].wave_idx = 0;
     }
 }
 
@@ -85,6 +90,7 @@ void prepare_audio() {
 void init_synth() {
     g_s.screen_w = GetScreenWidth();
     g_s.screen_h = GetScreenHeight();
+    g_s.amp = 0.5;
 
     prepare_keys();
     prepare_voices();
@@ -96,31 +102,41 @@ void deinit_synth() {
     CloseAudioDevice();
 }
 
-void hold_voice(int idx) {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_key_idx); i++) {
-        if (g_s.voice_key_idx[i] == idx) {
-            return;
-        }
-
-        if (g_s.voice_key_idx[i] == KEY_IDX_INVALID) {
-            g_s.voice_key_idx[i] = idx;
-            return;
-        }
-    }
-
-    g_s.voice_key_idx[0] = idx;
+void set_voice(int v_idx, int k_idx) {
+    g_s.voice_arr[v_idx].key_idx = k_idx;
+    g_s.voice_arr[v_idx].time = 0.0f;
+    g_s.voice_arr[v_idx].velocity = 40;
+    g_s.voice_arr[v_idx].wave_idx = 0;
 }
 
-void release_all_voices() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_key_idx); i++) {
-        g_s.voice_key_idx[i] = KEY_IDX_INVALID;
+void reset_voice(int v_idx) {
+    g_s.voice_arr[v_idx].key_idx = KEY_IDX_INVALID;
+    g_s.voice_arr[v_idx].time = 0.0f;
+    g_s.voice_arr[v_idx].velocity = 0;
+    g_s.voice_arr[v_idx].wave_idx = 0;
+}
+
+void hold_voice(int idx) {
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        if (g_s.voice_arr[i].key_idx == idx) {
+            g_s.voice_arr[i].time += GetFrameTime();
+            return;
+        }
+
+        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
+            set_voice(i, idx);
+            return;
+        }
     }
+
+    // Shift voices left first and replace with the last index?
+    set_voice(0, idx);
 }
 
 void release_voice(int idx) {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_key_idx); i++) {
-        if (g_s.voice_key_idx[i] == idx) {
-            g_s.voice_key_idx[i] = KEY_IDX_INVALID;
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        if (g_s.voice_arr[i].key_idx == idx) {
+            reset_voice(i);
         }
     }
 }
@@ -130,6 +146,10 @@ void process_screen() {
     g_s.screen_h = GetScreenHeight();
 }
 
+bool point_rect_intersection(Vector2 p, Vector2 rp, Vector2 rs) {
+    return p.x >= rp.x && p.x <= rp.x + rs.x && p.y >= rp.y && p.y <= rp.y + rs.y;
+}
+
 void process_keys() {
     for (int i = 0; i < 2 * KEY_OCTAVE; i++) {
         const float k_w = 40;
@@ -137,11 +157,11 @@ void process_keys() {
         const float k_h = 100;
         const float k_hs = 10;
 
-        g_s.keys[i + KEY_OFF].size.x = k_w;
-        g_s.keys[i + KEY_OFF].size.y = k_h;
+        g_s.key_arr[i + KEY_OFF].size.x = k_w;
+        g_s.key_arr[i + KEY_OFF].size.y = k_h;
 
-        g_s.keys[i + KEY_OFF].pos.x = i * k_w + (i + 1) * k_ws;
-        g_s.keys[i + KEY_OFF].pos.y = g_s.screen_h - k_hs - k_h;
+        g_s.key_arr[i + KEY_OFF].pos.x = i * k_w + (i + 1) * k_ws;
+        g_s.key_arr[i + KEY_OFF].pos.y = g_s.screen_h - k_hs - k_h;
     }
 
     static Vector2 touch_pos[MAX_TOUCH_POINTS] = { 0 };
@@ -157,40 +177,66 @@ void process_keys() {
     }
 
     for (int i = 0; i < t_count; i++) {
-        for (int j = KEY_OFF; j < KEY_OFF + 2 * KEY_OCTAVE; j++) {
-            if (touch_pos[i].x >= g_s.keys[j].pos.x && touch_pos[i].x <= g_s.keys[j].pos.x + g_s.keys[j].size.x &&
-                touch_pos[i].y >= g_s.keys[j].pos.y && touch_pos[i].y <= g_s.keys[j].pos.y + g_s.keys[j].size.y) {
-                hold_voice(j);
+        for (int k = KEY_OFF; k < KEY_OFF + 2 * KEY_OCTAVE; k++) {
+            Key key = g_s.key_arr[k];
+            if (point_rect_intersection(touch_pos[i], key.pos, key.size)) {
+                hold_voice(k);
                 break; // Found a key for this touch. See next.
             }
+        }
+    }
+
+    // Release unheld keys
+    for (int v = 0; v < ARRAY_SIZE(g_s.voice_arr); v++) {
+        if (g_s.voice_arr[v].key_idx == KEY_IDX_INVALID) {
+            break;
+        }
+
+        int k = g_s.voice_arr[v].key_idx;
+        Key key = g_s.key_arr[k];
+        bool found = false;
+        for (int i = 0; i < t_count; i++) {
+            if (point_rect_intersection(touch_pos[i], key.pos, key.size)) {
+                found = true;
+                break; // Found a touch for the held key.
+            }
+        }
+
+        if (!found) {
+            release_voice(k);
         }
     }
 }
 
 void update_osc() {
-    int i = 0;
+    if (!IsAudioStreamProcessed(g_s.stream)) {
+        return;
+    }
 
-    memcpy(g_s.osc.voice_key_idx, g_s.voice_key_idx, sizeof(g_s.osc.voice_key_idx));
-    release_all_voices();
+    int i = 0;
 
     for (int j = 0; j < BUFFER_SIZE; j++) {
         g_s.osc.buffer[j] = 0;
     }
 
-    for (i = 0; i < ARRAY_SIZE(g_s.osc.voice_key_idx); i++) {
-        if (g_s.osc.voice_key_idx[i] == KEY_IDX_INVALID) {
+    for (i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
             break;
         }
 
-        int key_idx = g_s.osc.voice_key_idx[i];
-        float wave_freq = g_s.keys[key_idx].freq;
+        int key_idx = g_s.voice_arr[i].key_idx;
+        float wave_freq = g_s.key_arr[key_idx].freq;
+        float vel_mult = g_s.voice_arr[i].velocity / MAX_VELOCITY;
 
         for (int j = 0; j < BUFFER_SIZE; j++) {
             float wave_length = SAMPLE_RATE / wave_freq;
-            g_s.osc.buffer[j] += 0.3 * sin(2 * PI * g_s.osc.wave_idx / wave_length);
-            g_s.osc.wave_idx++;
-            if (g_s.osc.wave_idx >= wave_length) {
-                g_s.osc.wave_idx = 0;
+            // TODO: Envelopes
+            // TODO: Calculate time based on sample rate?
+            // TODO: Mixer
+            g_s.osc.buffer[j] += vel_mult * sin(2 * PI * g_s.voice_arr[i].wave_idx / wave_length);
+            g_s.voice_arr[i].wave_idx++;
+            if (g_s.voice_arr[i].wave_idx >= wave_length) {
+                g_s.voice_arr[i].wave_idx = 0;
             }
         }
     }
@@ -202,20 +248,20 @@ void update_stream() {
     }
 
     for (int i = 0; i < BUFFER_SIZE; i++) {
-        g_s.buffer[i] = 1 * g_s.osc.buffer[i];
+        g_s.buffer[i] = g_s.amp * g_s.osc.buffer[i];
     }
 
     UpdateAudioStream(g_s.stream, g_s.osc.buffer, BUFFER_SIZE);
 }
 
 void draw_freq() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.osc.voice_key_idx); i++) {
-        if (g_s.osc.voice_key_idx[i] == KEY_IDX_INVALID) {
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
             break;
         }
 
-        int key_idx = g_s.osc.voice_key_idx[i];
-        float wave_freq = g_s.keys[key_idx].freq;
+        int key_idx = g_s.voice_arr[i].key_idx;
+        float wave_freq = g_s.key_arr[key_idx].freq;
         DrawText(
                 TextFormat("sine frequency: %f, key idx: %d", wave_freq, key_idx),
                 10, 10 + FONT_SIZE * i,
@@ -263,16 +309,16 @@ void draw_wave() {
 void draw_keys() {
     for (int i = KEY_OFF; i < KEY_OFF + 2 * KEY_OCTAVE; i++) {
         Rectangle r;
-        r.x = g_s.keys[i].pos.x;
-        r.y = g_s.keys[i].pos.y;
-        r.width = g_s.keys[i].size.x;
-        r.height = g_s.keys[i].size.y;
+        r.x = g_s.key_arr[i].pos.x;
+        r.y = g_s.key_arr[i].pos.y;
+        r.width = g_s.key_arr[i].size.x;
+        r.height = g_s.key_arr[i].size.y;
 
         DrawRectangleLinesEx(r, 5, BLACK);
         DrawText(
-                TextFormat("%d\n%.2f", i, g_s.keys[i].freq),
-                g_s.keys[i].pos.x + 5,
-                g_s.keys[i].pos.y + g_s.keys[i].size.y / 2,
+                TextFormat("%d\n%.2f", i, g_s.key_arr[i].freq),
+                g_s.key_arr[i].pos.x + 5,
+                g_s.key_arr[i].pos.y + g_s.key_arr[i].size.y / 2,
                 FONT_SIZE, BLACK);
     }
 }
