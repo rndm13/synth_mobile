@@ -5,6 +5,9 @@
 
 #define ARRAY_SIZE(X) (sizeof(X) / sizeof(*(X)))
 
+#define ENV_A_MIN 0.05f
+#define ENV_R_MIN 0.05f
+
 #define KEY_COUNT 88
 #define KEY_OCTAVE 12
 
@@ -44,7 +47,16 @@ typedef struct Voice {
     int wave_idx;
     int velocity;
     float time;
+    float release_time;
+    bool released;
 } Voice;
+
+typedef struct Env {
+    float attack;
+    float decay;
+    float sustain;
+    float release;
+} Env;
 
 typedef struct Osc {
     float buffer[BUFFER_SIZE];
@@ -71,16 +83,46 @@ typedef struct Synth {
     Voice voice_arr[KEY_MAX_VOICES];
 
     Osc osc;
+    Env env;
 
     float amp;
     float pan;
-
 
     float buffer[BUFFER_SIZE];
     AudioStream stream;
 } Synth;
 
 Synth g_s;
+
+float get_env_value(float time, bool released, float release_time, Env env) {
+    // 1. Handle Release Phase
+    if (released) {
+        float time_in_release = time - release_time;
+        if (time_in_release >= env.release) {
+            return 0.0f;
+        }
+
+        // We calculate the value starting from the sustain level down to 0
+        // (Note: For a perfect implementation, you'd track the exact amplitude at the
+        // moment of release, but using sustainLevel is the standard simplification).
+        return env.sustain * (1.0f - (time_in_release / env.release));
+    }
+
+    // 2. Attack Phase
+    if (time < env.attack) {
+        return time / env.attack;
+    }
+
+    // 3. Decay Phase
+    float timeInDecay = time - env.attack;
+    if (timeInDecay < env.decay) {
+        float decayProgress = timeInDecay / env.decay;
+        return 1.0f - (decayProgress * (1.0f - env.sustain));
+    }
+
+    // 4. Sustain Phase
+    return env.sustain;
+}
 
 bool key_is_black(int k) {
     static const int black_idx_arr[] = {
@@ -162,6 +204,11 @@ void init_synth() {
     g_s.amp = 0.2;
     g_s.pan = 0.0f;
 
+    g_s.env.attack = ENV_A_MIN;
+    g_s.env.decay = 0.00f;
+    g_s.env.sustain = 1.0f;
+    g_s.env.release = ENV_R_MIN;
+
     prepare_keys();
     prepare_voices();
     prepare_audio();
@@ -177,6 +224,8 @@ void set_voice(int v_idx, int k_idx) {
     g_s.voice_arr[v_idx].time = 0.0f;
     g_s.voice_arr[v_idx].velocity = 40;
     g_s.voice_arr[v_idx].wave_idx = 0;
+    g_s.voice_arr[v_idx].released = false;
+    g_s.voice_arr[v_idx].release_time = 0.0f;
 }
 
 void reset_voice(int v_idx) {
@@ -184,26 +233,11 @@ void reset_voice(int v_idx) {
     g_s.voice_arr[v_idx].time = 0.0f;
     g_s.voice_arr[v_idx].velocity = 0;
     g_s.voice_arr[v_idx].wave_idx = 0;
+    g_s.voice_arr[v_idx].released = false;
+    g_s.voice_arr[v_idx].release_time = 0.0f;
 }
 
-void hold_voice(int idx) {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        if (g_s.voice_arr[i].key_idx == idx) {
-            g_s.voice_arr[i].time += GetFrameTime();
-            return;
-        }
-
-        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
-            set_voice(i, idx);
-            return;
-        }
-    }
-
-    // Shift voices left first and replace with the last index?
-    set_voice(0, idx);
-}
-
-void release_voice(int idx) {
+void clear_voice(int v_idx) {
     int size = 0;
     for (; size < ARRAY_SIZE(g_s.voice_arr); size++) {
         if (g_s.voice_arr[size].key_idx == KEY_IDX_INVALID) {
@@ -211,16 +245,66 @@ void release_voice(int idx) {
         }
     }
 
+    // Replace with the last element
+    if (size != 0) {
+        g_s.voice_arr[v_idx] = g_s.voice_arr[size - 1];
+        reset_voice(size - 1);
+    }
+}
+
+void hold_voice(int idx) {
     for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        if (g_s.voice_arr[i].key_idx == idx) {
-            // Replace with the last element
-            if (size != 0) {
-                g_s.voice_arr[i] = g_s.voice_arr[size - 1];
-                reset_voice(size - 1);
-            }
+        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
+            set_voice(i, idx);
+            return;
+        }
+
+        if (g_s.voice_arr[i].key_idx == idx && !g_s.voice_arr[i].released) {
+            return;
+        }
+    }
+
+    // Shift voices left first and replace with the last index?
+    clear_voice(0);
+    set_voice(ARRAY_SIZE(g_s.voice_arr) - 1, idx);
+}
+
+void release_voice(int idx) {
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        if (g_s.voice_arr[i].key_idx == idx && !g_s.voice_arr[i].released) {
+            g_s.voice_arr[i].released = true;
+            g_s.voice_arr[i].release_time = g_s.voice_arr[i].time;
+
             break;
         }
     }
+}
+
+void clear_released_voices() {
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
+            return;
+        }
+
+        float env_mul = get_env_value(
+                g_s.voice_arr[i].time,
+                g_s.voice_arr[i].released,
+                g_s.voice_arr[i].release_time,
+                g_s.env);
+
+        if (g_s.voice_arr[i].release_time && env_mul == 0) {
+            clear_voice(i);
+            return;
+        }
+    }
+}
+
+void process_voice_arr() {
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+        g_s.voice_arr[i].time += GetFrameTime();
+    }
+
+    clear_released_voices();
 }
 
 void process_screen() {
@@ -295,14 +379,21 @@ void update_osc() {
 
         int key_idx = g_s.voice_arr[i].key_idx;
         float wave_freq = g_s.key_arr[key_idx].freq;
-        float vel_mult = g_s.voice_arr[i].velocity / MAX_VELOCITY;
+        float vel_mul = g_s.voice_arr[i].velocity / MAX_VELOCITY;
+        float env_mul = 0.0f;
 
         for (int j = 0; j < BUFFER_SIZE; j++) {
+            float dt = j / (float)SAMPLE_RATE;
             float wave_length = SAMPLE_RATE / wave_freq;
-            // TODO: Envelopes
+            env_mul = get_env_value(
+                    g_s.voice_arr[i].time + dt,
+                    g_s.voice_arr[i].released,
+                    g_s.voice_arr[i].release_time + dt,
+                    g_s.env);
+
             // TODO: Calculate time based on sample rate?
             // TODO: Mixer
-            g_s.osc.buffer[j] += vel_mult * sin(2 * PI * g_s.voice_arr[i].wave_idx / wave_length);
+            g_s.osc.buffer[j] += env_mul * vel_mul * sin(2 * PI * g_s.voice_arr[i].wave_idx / wave_length);
             g_s.voice_arr[i].wave_idx++;
             if (g_s.voice_arr[i].wave_idx >= wave_length) {
                 g_s.voice_arr[i].wave_idx = 0;
@@ -323,16 +414,19 @@ void update_stream() {
     UpdateAudioStream(g_s.stream, g_s.buffer, BUFFER_SIZE);
 }
 
-void draw_freq() {
+void draw_voice_arr() {
     for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
         if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
             break;
         }
 
         int key_idx = g_s.voice_arr[i].key_idx;
+        float rel_time = g_s.voice_arr[i].release_time;
         float wave_freq = g_s.key_arr[key_idx].freq;
         DrawText(
-                TextFormat("sine frequency: %f, key idx: %d", wave_freq, key_idx),
+                TextFormat(
+                    "sine frequency: %.2f, key idx: %d, rel time:%.2f",
+                    wave_freq, key_idx, rel_time),
                 10, 10 + FONT_SIZE * i,
                 FONT_SIZE, RED);
     }
@@ -389,18 +483,32 @@ void draw_fps() {
 }
 
 void draw_tab_synth() {
-    Vector2 cursor_p = {GUI_GAP, TAB_H + GUI_GAP};
+    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     DrawKnob("Amp", cursor_p, KNOB_RADIUS, &g_s.amp, 0.0f, 1.0f);
     cursor_p.y += KNOB_SIZE_H;
     if (DrawKnob("Pan", cursor_p, KNOB_RADIUS, &g_s.pan, 0.0f, 1.0f)) {
         SetAudioStreamPan(g_s.stream, g_s.pan);
     }
+    cursor_p.y += KNOB_SIZE_H;
 }
 
 void draw_tab_keys() {
-    draw_freq();
+    draw_voice_arr();
     draw_wave();
     draw_keys();
+}
+
+void draw_tab_env() {
+    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
+
+    DrawKnob("Attack", cursor_p, KNOB_RADIUS, &g_s.env.attack, ENV_A_MIN, 1.0f);
+    cursor_p.y += KNOB_SIZE_H;
+    DrawKnob("Decay", cursor_p, KNOB_RADIUS, &g_s.env.decay, 0.0f, 1.0f);
+    cursor_p.y += KNOB_SIZE_H;
+    DrawKnob("Sustain", cursor_p, KNOB_RADIUS, &g_s.env.sustain, ENV_R_MIN, 1.0f);
+    cursor_p.y += KNOB_SIZE_H;
+    DrawKnob("Release", cursor_p, KNOB_RADIUS, &g_s.env.release, 0.0f, 1.0f);
+    cursor_p.y += KNOB_SIZE_H;
 }
 
 void process_ui() {
@@ -435,6 +543,7 @@ void draw_ui() {
     case TAB_OSC:
         break;
     case TAB_ENV:
+        draw_tab_env();
         break;
     case TAB_FLT:
         break;
@@ -455,6 +564,7 @@ int main(void) {
     {
         // Process
         process_ui();
+        process_voice_arr();
 
         // Update
         update_osc();
