@@ -176,3 +176,59 @@ bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size) {
 
     return clicked;
 }
+
+// Draws a slider and updates the value if the user interacts with it.
+// Returns true if the value was modified this frame.
+bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue) {
+    bool valueChanged = false;
+    Rectangle bounds = {cursor->x, cursor->y, size.x, size.y};
+
+    // 1. Handle Input
+    Vector2 mousePos = GetMousePosition();
+    bool isHovering = CheckCollisionPointRec(mousePos, bounds);
+
+    // If the mouse is pressed or held down while over the slider bounds
+    if (isHovering && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        // Calculate where the mouse is relative to the width of the slider (0.0 to 1.0)
+        float percent = (mousePos.x - bounds.x) / bounds.width;
+
+        // Clamp the percentage to prevent the value from exceeding min/max limits
+        if (percent < 0.0f) percent = 0.0f;
+        if (percent > 1.0f) percent = 1.0f;
+
+        // Map the percentage back to the value range
+        float newValue = minValue + percent * (maxValue - minValue);
+
+        if (*value != newValue) {
+            *value = newValue;
+            valueChanged = true;
+        }
+    }
+
+    // 2. Draw the visual components
+    // Draw the background track
+    DrawRectangleRec(bounds, SLIDER_INNER_COLOR);
+    DrawRectangleLinesEx(bounds, SLIDER_OUTER_THIKNESS, SLIDER_OUTER_COLOR);
+
+    // Calculate how much of the slider should be "filled"
+    float percentFilled = 0.0f;
+    if (maxValue > minValue) { // Prevent division by zero
+        percentFilled = (*value - minValue) / (maxValue - minValue);
+    }
+
+    // Draw the filled portion
+    Rectangle fillRec = { bounds.x, bounds.y, bounds.width * percentFilled, bounds.height };
+    DrawRectangleRec(fillRec, SLIDER_FILLED_COLOR);
+
+    // Draw the handle (thumb)
+    Rectangle handleRec = { bounds.x + fillRec.width - 5, bounds.y - 2, 10, bounds.height + 4 };
+    DrawRectangleRec(handleRec, SLIDER_THUMB_COLOR);
+
+    if (g_dir == GD_HORIZONTAL) {
+        cursor->x += size.x + GUI_GAP;
+    } else {
+        cursor->y += size.y + GUI_GAP;
+    }
+
+    return valueChanged;
+}

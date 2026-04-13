@@ -38,6 +38,14 @@
 #define WAVE_SIZE_W            500
 #define WAVE_SIZE_H            150
 
+#define SLIDER_INNER_COLOR     LIGHTGRAY
+#define SLIDER_OUTER_COLOR     BLACK
+#define SLIDER_FILLED_COLOR    DARKBLUE
+#define SLIDER_THUMB_COLOR     SKYBLUE
+#define SLIDER_SIZE_W          500
+#define SLIDER_SIZE_H          50
+#define SLIDER_OUTER_THIKNESS  1.0f
+
 #define FONT_SIZE              20
 #define MAX_TOUCH_POINTS       10
 #define KNOB_RADIUS            25
@@ -55,3 +63,4 @@ bool DrawKnob(const char* label, Vector2 *cursor, float radius, float *value, fl
 bool DrawKnobI(const char* label, Vector2 *cursor, float radius, int *value, int minValue, int maxValue);
 bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIndex);
 bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size);
+bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue);

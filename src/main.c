@@ -1,16 +1,30 @@
 #include "raylib.h"
+#include "raymath.h"
 #include <math.h>
 #include <stddef.h>
+#include <complex.h>
 
 #include "gui_elements.h"
 
+#define SAMPLE_RATE   44100
+
 #define ARRAY_SIZE(X) (sizeof(X) / sizeof(*(X)))
-#define WAVE_DISPLAY_BUFFER_SIZE 256
 
 #define OSC_SEMI_RANGE 12
 
-#define ENV_A_MIN 0.05f
-#define ENV_R_MIN 0.05f
+#define ENV_A_MIN 0.1f
+#define ENV_A_MAX 5.0f
+#define ENV_D_MIN 0.1f
+#define ENV_D_MAX 5.0f
+#define ENV_R_MIN 0.1f
+#define ENV_R_MAX 5.0f
+
+#define FLT_CUTOFF_MIN 50.0f
+#define FLT_CUTOFF_MAX (SAMPLE_RATE / 2.0f)
+#define FLT_RESONANCE_MIN 0.7071f
+#define FLT_RESONANCE_MAX 20.0f
+#define FLT_GAIN_MIN -20.0f
+#define FLT_GAIN_MAX 20.0f
 
 #define KEY_C_OFF    4
 #define OCTAVE_COUNT 8
@@ -25,8 +39,8 @@
 
 #define KEY_IDX_INVALID -1
 
+#define DISPLAY_BUFFER_SIZE 256
 #define BUFFER_SIZE 4096
-#define SAMPLE_RATE 44100
 
 #define MAX_VELOCITY 80.0f
 
@@ -39,6 +53,8 @@
 #define X_STR_CASE(v, s) \
     case v: return s;
 
+#define RC_CAPACITY 0.1591549431f
+
 typedef struct Key {
     Vector2 pos;
     Vector2 size;
@@ -48,6 +64,8 @@ typedef struct Key {
 
 typedef struct Voice {
     int key_idx;
+    // This should be somehow moved to oscillator,
+    // since multiple oscillators can have a different semitone offset
     int wave_idx;
     int velocity;
     float time;
@@ -78,8 +96,47 @@ typedef struct Osc {
     int semi;
 
     float buffer[BUFFER_SIZE];
-    float disp_buffer[WAVE_DISPLAY_BUFFER_SIZE];
+    float disp_buffer[DISPLAY_BUFFER_SIZE];
 } Osc;
+
+#define FLT_TYPE_X(X)             \
+    X(FT_LPF, "Low-pass filter")  \
+    X(FT_HPF, "High-pass filter") \
+    X(FT_BPF, "Band-pass filter") \
+
+typedef enum FilterType {
+    FLT_TYPE_X(X_ENUM)
+    FT_MAX,
+} FilterType;
+
+const char* ft2str(FilterType ft) {
+    switch (ft) {
+        FLT_TYPE_X(X_STR_CASE)
+        default:
+            break;
+    }
+    return "Unknown";
+}
+
+typedef struct Filter {
+    FilterType type;
+    float cutoff;
+    float resonance;
+    float gain;
+
+    // Parameters calculated when any of the arguments are changed
+    double norm;
+    double a[3]; // Poles
+    double b[3]; // Zeros
+    float disp_buffer[DISPLAY_BUFFER_SIZE];
+
+    // Filter state
+    double x[3];
+    double y[3];
+
+    // Filter output
+    float buffer[BUFFER_SIZE];
+} Filter;
 
 #define TAB_X(X)                \
     X(TAB_SYNTH, "Synth")       \
@@ -105,6 +162,7 @@ typedef struct Synth {
 
     Osc osc;
     Env env;
+    Filter filter;
 
     float amp;
     float pan;
@@ -163,6 +221,8 @@ bool key_is_black(int k) {
 }
 
 float get_osc_kernel(int wave_idx, int wave_length) {
+    wave_idx %= wave_length;
+
     switch (g_s.osc.type) {
         case OT_SINE:
             return sin(2 * PI * wave_idx / wave_length);
@@ -248,7 +308,81 @@ void prepare_audio() {
 void prepare_osc_display_buffer() {
     int wave_length = ARRAY_SIZE(g_s.osc.disp_buffer);
     for (int i = 0; i < wave_length; i++) {
-        g_s.osc.disp_buffer[i] = get_osc_kernel(i, wave_length);
+        g_s.osc.disp_buffer[i] = get_osc_kernel(i, wave_length / 2);
+    }
+}
+
+void prepare_filter() {
+    Filter* flt = &g_s.filter;
+    double V = powf(10, fabs(flt->gain) / 20);
+    double K = tan(PI * flt->cutoff / SAMPLE_RATE);
+
+    flt->a[0] = 1;
+    switch (flt->type) {
+        case FT_LPF:
+            flt->norm = 1 / (1 + K / flt->resonance + K * K);
+            flt->b[0] = K * K * flt->norm;
+            flt->b[1] = 2 * flt->b[0];
+            flt->b[2] = flt->b[0];
+            flt->a[1] = 2 * (K * K - 1) * flt->norm;
+            flt->a[2] = (1 - K / flt->resonance + K * K) * flt->norm;
+            break;
+
+        case FT_HPF:
+            flt->norm = 1 / (1 + K / flt->resonance + K * K);
+            flt->b[0] = 1 * flt->norm;
+            flt->b[1] = -2 * flt->b[0];
+            flt->b[2] = flt->b[0];
+            flt->a[1] = 2 * (K * K - 1) * flt->norm;
+            flt->a[2] = (1 - K / flt->resonance + K * K) * flt->norm;
+            break;
+
+        case FT_BPF:
+            flt->norm = 1 / (1 + K / flt->resonance + K * K);
+            flt->b[0] = K / flt->resonance * flt->norm;
+            flt->b[1] = 0;
+            flt->b[2] = -flt->b[0];
+            flt->a[1] = 2 * (K * K - 1) * flt->norm;
+            flt->a[2] = (1 - K / flt->resonance + K * K) * flt->norm;
+            break;
+
+        default:
+            break;
+    }
+
+    for (size_t i = 0; i < DISPLAY_BUFFER_SIZE; i++) {
+        // Current frequency in radians (0 to PI)
+        double w = PI * (double)i / DISPLAY_BUFFER_SIZE;
+
+        double complex z1 = cexp(-I * w);
+        double complex z2 = cexp(-I * 2.0 * w);
+
+        // H(z) = (b0 + b1*z^-1 + b2*z^-2) / (a0 + a1*z^-1 + a2*z^-2)
+        double complex num = flt->a[0] + flt->a[1] * z1 + flt->a[2] * z2;
+        double complex den = flt->b[0] + flt->b[1] * z1 + flt->b[2] * z2;
+
+        // double a = creal(num);
+        // double b = cimag(num);
+        // double c = creal(den);
+        // double d = cimag(den);
+        // double den_r = c*c+d*d;
+
+        double nMag = cabs(num);
+        double dMag = cabs(den);
+
+        // if (fabs(den_r) < EPSILON) {
+        //     flt->disp_buffer[i] = 0;
+        // } else {
+        //     double complex H = (a*c + b*d) / den_r + ((b*c - a*d) / den_r) * I;
+        // }
+        if (dMag < 1e-12) {
+            flt->disp_buffer[i] = 0.0f;
+        } else {
+            double magnitude = nMag / dMag;
+
+            // The magnitude is the absolute value of the complex result
+            flt->disp_buffer[i] = Clamp(-log10f(magnitude), -1, 1);
+        }
     }
 }
 
@@ -262,9 +396,15 @@ void init_synth() {
     g_s.pan = 0.5f;
 
     g_s.env.attack = ENV_A_MIN;
-    g_s.env.decay = 0.00f;
+    g_s.env.decay = ENV_D_MIN;
     g_s.env.sustain = 1.0f;
     g_s.env.release = ENV_R_MIN;
+
+    g_s.filter.type = FT_LPF;
+    g_s.filter.cutoff = FLT_CUTOFF_MAX;
+    g_s.filter.resonance = FLT_RESONANCE_MIN;
+    g_s.filter.gain = 0.0f;
+    prepare_filter();
 
     g_s.osc.type = OT_SINE;
     g_s.osc.semi = 0;
@@ -427,13 +567,11 @@ void update_osc() {
         return;
     }
 
-    int i = 0;
-
     for (int j = 0; j < BUFFER_SIZE; j++) {
         g_s.osc.buffer[j] = 0;
     }
 
-    for (i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
         if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
             break;
         }
@@ -470,13 +608,48 @@ void update_osc() {
     }
 }
 
+void update_filter() {
+    Filter* flt = &g_s.filter;
+
+    for (size_t i = 0; i < ARRAY_SIZE(flt->buffer); i++) {
+        flt->buffer[i] = 0.0f;
+    }
+
+    // Converts the buffer data before using it
+    const Osc *osc = &g_s.osc;
+    for (size_t i = 0; i < ARRAY_SIZE(osc->buffer); i++) {
+        // If there are multiple oscillaters, probably I should just sum them up first...
+
+        // Move old state
+        // Y-1 -> Y-2
+        flt->y[2] = flt->y[1];
+        // Y-0 -> Y-1
+        flt->y[1] = flt->y[0];
+
+        // X-1 -> X-2
+        flt->x[2] = flt->x[1];
+        // X-0 -> X-1
+        flt->x[1] = flt->x[0];
+
+        flt->x[0] = osc->buffer[i];
+        flt->y[0] =
+            flt->a[0] * flt->x[0] +
+            flt->a[1] * flt->x[1] +
+            flt->a[2] * flt->x[2] -
+            flt->b[1] * flt->y[1] -
+            flt->b[2] * flt->y[2];
+
+        flt->buffer[i] += flt->y[0];
+    }
+}
+
 void update_stream() {
     if (!IsAudioStreamProcessed(g_s.stream)) {
         return;
     }
 
     for (int i = 0; i < BUFFER_SIZE; i++) {
-        g_s.buffer[i] = g_s.amp * g_s.osc.buffer[i];
+        g_s.buffer[i] = g_s.amp * g_s.filter.buffer[i];
     }
 
     UpdateAudioStream(g_s.stream, g_s.buffer, BUFFER_SIZE);
@@ -541,19 +714,9 @@ void draw_tab_synth() {
     }
 }
 
-void draw_tab_env() {
-    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
-
-    SetDir(GD_HORIZONTAL);
-    DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &g_s.env.attack, ENV_A_MIN, 1.0f);
-    DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &g_s.env.decay, 0.0f, 1.0f);
-    DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &g_s.env.sustain, ENV_R_MIN, 1.0f);
-    DrawKnob("Release", &cursor_p, KNOB_RADIUS, &g_s.env.release, 0.0f, 1.0f);
-}
-
 void draw_tab_osc() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
-    Vector2 wave_s = {500, WAVE_SIZE_H};
+    Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
 
     SetDir(GD_VERTICAL);
     if (DrawWave(&cursor_p, wave_s, g_s.osc.disp_buffer, ARRAY_SIZE(g_s.osc.disp_buffer))) {
@@ -566,11 +729,57 @@ void draw_tab_osc() {
     DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &g_s.osc.semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE);
 }
 
+void draw_tab_env() {
+    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
+
+    SetDir(GD_HORIZONTAL);
+    DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &g_s.env.attack, ENV_A_MIN, ENV_A_MAX);
+    DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &g_s.env.decay, ENV_D_MIN, ENV_D_MAX);
+    DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &g_s.env.sustain, 0.0f, 1.0f);
+    DrawKnob("Release", &cursor_p, KNOB_RADIUS, &g_s.env.release, ENV_R_MIN, ENV_R_MAX);
+}
+
+void draw_tab_filter() {
+    bool changed_type;
+    bool changed = false;
+    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
+    Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
+    Vector2 slider_s = {wave_s.x, SLIDER_SIZE_H};
+
+    SetDir(GD_VERTICAL);
+    changed_type = DrawWave(&cursor_p, wave_s, g_s.filter.disp_buffer, DISPLAY_BUFFER_SIZE);
+    if (changed_type) {
+        changed |= true;
+
+        g_s.filter.type++;
+        g_s.filter.type %= FT_MAX;
+    }
+
+    DrawText(
+            TextFormat("Click to change type. Current type: %s", ft2str(g_s.filter.type)),
+            cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
+    cursor_p.y += FONT_SIZE + GUI_GAP;
+
+    changed |= DrawSlider(&cursor_p, slider_s, &g_s.filter.cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
+    SetDir(GD_HORIZONTAL);
+    changed |= DrawKnob("Resonance", &cursor_p, KNOB_RADIUS, &g_s.filter.resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX);
+    changed |= DrawKnob("Gain", &cursor_p, KNOB_RADIUS, &g_s.filter.gain, FLT_GAIN_MIN, FLT_GAIN_MAX);
+
+    if (changed) {
+        prepare_filter();
+    }
+
+    DrawText(
+            TextFormat("a0 %f\na1 %f\na2 %f\nb0 %f\nb1 %f\nb2 %f\n",
+            g_s.filter.a[0], g_s.filter.a[1], g_s.filter.a[2],
+            g_s.filter.b[0], g_s.filter.b[1], g_s.filter.b[2]),
+            cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
+}
+
 void draw_tab_keys() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
 
-    draw_voice_arr();
     DrawWave(&cursor_p, wave_s, g_s.buffer, BUFFER_SIZE);
     draw_keys();
 
@@ -579,6 +788,9 @@ void draw_tab_keys() {
     if (DrawKnobI("Octave", &cursor_p, KNOB_RADIUS, &g_s.cur_octave, 0, OCTAVE_COUNT - 2)) {
         prepare_keys();
     }
+
+    // TODO: move this to debug only.
+    draw_voice_arr();
 }
 
 void process_ui() {
@@ -617,6 +829,7 @@ void draw_ui() {
         draw_tab_env();
         break;
     case TAB_FLT:
+        draw_tab_filter();
         break;
     case TAB_KEYS:
         draw_tab_keys();
@@ -639,6 +852,7 @@ int main(void) {
 
         // Update
         update_osc();
+        update_filter();
         update_stream();
 
         // Draw
