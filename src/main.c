@@ -1,8 +1,10 @@
 #include "raylib.h"
 #include "raymath.h"
+
 #include <math.h>
 #include <stddef.h>
 #include <complex.h>
+#include <pthread.h>
 
 #include "gui_elements.h"
 
@@ -19,12 +21,13 @@
 #define ENV_R_MIN 0.1f
 #define ENV_R_MAX 5.0f
 
-#define FLT_CUTOFF_MIN 50.0f
-#define FLT_CUTOFF_MAX (SAMPLE_RATE / 2.0f)
+#define FLT_OVERSAMPLING  2
+#define FLT_CUTOFF_MIN    50.0f
+#define FLT_CUTOFF_MAX    (SAMPLE_RATE / 2.0f)
 #define FLT_RESONANCE_MIN 0.7071f
 #define FLT_RESONANCE_MAX 20.0f
-#define FLT_GAIN_MIN -20.0f
-#define FLT_GAIN_MAX 20.0f
+#define FLT_GAIN_MIN      -20.0f
+#define FLT_GAIN_MAX      20.0f
 
 #define KEY_C_OFF    4
 #define OCTAVE_COUNT 8
@@ -35,7 +38,7 @@
 #define KEY_A4_FREQ 440.0f
 #define KEY_C4_IDX  (KEY_A4_IDX - 9)
 
-#define KEY_MAX_VOICES 8
+#define VOICES_MAX_COUNT 8
 
 #define KEY_IDX_INVALID -1
 
@@ -62,18 +65,24 @@ typedef struct Key {
     float freq;
 } Key;
 
+// TODO: thread-safety
 typedef struct Voice {
+    // Initially set
     int key_idx;
-    // This should be somehow moved to oscillator,
-    // since multiple oscillators can have a different semitone offset
-    int wave_idx;
     int velocity;
+
+    // Set during runtime.
+    // TODO: replace this with start time, not sure what to do with release time
     float time;
     float release_time;
     bool released;
+
+    // TODO: move this to oscillator
+    int wave_idx;
 } Voice;
 
 typedef struct Env {
+    pthread_rwlock_t rw;
     float attack;
     float decay;
     float sustain;
@@ -91,10 +100,17 @@ typedef enum OscType {
     OT_MAX,
 } OscType;
 
-typedef struct Osc {
+typedef struct OscParams {
+    pthread_rwlock_t rw;
     OscType type;
     int semi;
+} OscParams;
 
+typedef struct Osc {
+    // RW protected
+    OscParams params;
+
+    // Output
     float buffer[BUFFER_SIZE];
     float disp_buffer[DISPLAY_BUFFER_SIZE];
 } Osc;
@@ -118,7 +134,9 @@ const char* ft2str(FilterType ft) {
     return "Unknown";
 }
 
-typedef struct Filter {
+typedef struct FilterParams {
+    pthread_rwlock_t rw;
+
     FilterType type;
     float cutoff;
     float resonance;
@@ -128,13 +146,18 @@ typedef struct Filter {
     double norm;
     double a[3]; // Poles
     double b[3]; // Zeros
-    float disp_buffer[DISPLAY_BUFFER_SIZE];
+} FilterParams;
+
+typedef struct Filter {
+    // RW protected
+    FilterParams params;
 
     // Filter state
     double x[3];
     double y[3];
 
     // Filter output
+    float disp_buffer[DISPLAY_BUFFER_SIZE];
     float buffer[BUFFER_SIZE];
 } Filter;
 
@@ -149,6 +172,12 @@ typedef enum Tab {
     TAB_X(X_ENUM)
 } Tab;
 
+typedef struct SynthParams {
+    pthread_rwlock_t rw;
+    float amp;
+    float pan;
+} SynthParams;
+
 typedef struct Synth {
     int screen_w;
     int screen_h;
@@ -158,49 +187,69 @@ typedef struct Synth {
     int cur_octave;
     Key key_arr[KEY_COUNT];
 
-    Voice voice_arr[KEY_MAX_VOICES];
-
-    Osc osc;
-    Env env;
-    Filter filter;
-
-    float amp;
-    float pan;
+    Voice voice_arr[VOICES_MAX_COUNT];
 
     float buffer[BUFFER_SIZE];
     AudioStream stream;
+
+    // Parameters
+    SynthParams params;
+    Osc osc;
+    Env env;
+    Filter flt;
 } Synth;
 
 Synth g_s;
 
-float get_env_value(float time, bool released, float release_time, Env env) {
+float get_env_value(float time, bool released, float release_time, Env *env) {
+    float result = 0.0f;
+    int e = pthread_rwlock_rdlock(&env->rw);
+    if (e != 0) {
+        // TODO: Log
+        return result;
+    }
+
     // 1. Handle Release Phase
     if (released) {
         float time_in_release = time - release_time;
-        if (time_in_release >= env.release) {
-            return 0.0f;
+        if (time_in_release >= env->release) {
+            result = 0.0f;
+            goto unlock;
         }
 
         // We calculate the value starting from the sustain level down to 0
+        // TODO:
         // (Note: For a perfect implementation, you'd track the exact amplitude at the
         // moment of release, but using sustainLevel is the standard simplification).
-        return env.sustain * (1.0f - (time_in_release / env.release));
+        result = env->sustain * (1.0f - (time_in_release / env->release));
+        goto unlock;
     }
 
     // 2. Attack Phase
-    if (time < env.attack) {
-        return time / env.attack;
+    if (time < env->attack) {
+        result = time / env->attack;
+        goto unlock;
     }
 
     // 3. Decay Phase
-    float timeInDecay = time - env.attack;
-    if (timeInDecay < env.decay) {
-        float decayProgress = timeInDecay / env.decay;
-        return 1.0f - (decayProgress * (1.0f - env.sustain));
+    float timeInDecay = time - env->attack;
+    if (timeInDecay < env->decay) {
+        float decayProgress = timeInDecay / env->decay;
+
+        result = 1.0f - (decayProgress * (1.0f - env->sustain));
+        goto unlock;
     }
 
     // 4. Sustain Phase
-    return env.sustain;
+    result = env->sustain;
+
+unlock:
+    e = pthread_rwlock_unlock(&env->rw);
+    if (e != 0) {
+        // TODO: Log
+        return result;
+    }
+    return result;
 }
 
 bool key_is_black(int k) {
@@ -220,10 +269,10 @@ bool key_is_black(int k) {
     return false;
 }
 
-float get_osc_kernel(int wave_idx, int wave_length) {
+float get_osc_kernel(OscType type, int wave_idx, int wave_length) {
     wave_idx %= wave_length;
 
-    switch (g_s.osc.type) {
+    switch (type) {
         case OT_SINE:
             return sin(2 * PI * wave_idx / wave_length);
             break;
@@ -294,6 +343,8 @@ void prepare_voices() {
     }
 }
 
+void audio_callback(void *_buffer, unsigned int frames);
+
 void prepare_audio() {
     InitAudioDevice();
 
@@ -301,53 +352,96 @@ void prepare_audio() {
     SetAudioStreamBufferSizeDefault(BUFFER_SIZE);
     // Init raw audio stream (sample rate: 44100, sample size: 32bit-float, channels: 1-mono)
     g_s.stream = LoadAudioStream(SAMPLE_RATE, 32, 1);
-    SetAudioStreamPan(g_s.stream, g_s.pan);
+    SetAudioStreamPan(g_s.stream, g_s.params.pan);
     PlayAudioStream(g_s.stream);
+    SetAudioStreamCallback(g_s.stream, audio_callback);
 }
 
 void prepare_osc_display_buffer() {
+    int e = pthread_rwlock_rdlock(&g_s.osc.params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
     int wave_length = ARRAY_SIZE(g_s.osc.disp_buffer);
     for (int i = 0; i < wave_length; i++) {
-        g_s.osc.disp_buffer[i] = get_osc_kernel(i, wave_length / 2);
+        g_s.osc.disp_buffer[i] = get_osc_kernel(g_s.osc.params.type, i, wave_length / 2);
+    }
+
+    e = pthread_rwlock_unlock(&g_s.osc.params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
     }
 }
 
-void prepare_filter() {
-    Filter* flt = &g_s.filter;
-    double V = powf(10, fabs(flt->gain) / 20);
-    double K = tan(PI * flt->cutoff / SAMPLE_RATE);
+void prepare_filter_params() {
+    Filter* flt = &g_s.flt;
+    FilterParams* params = &flt->params;
 
-    flt->a[0] = 1;
-    switch (flt->type) {
+    int e = pthread_rwlock_wrlock(&params->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    // double V = powf(10, fabs(params->gain) / 20);
+    double K = tan(PI * params->cutoff / SAMPLE_RATE);
+
+    // for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
+    //     flt->x[i] = 0;
+    //     flt->y[i] = 0;
+    // }
+
+    params->a[0] = 1;
+    switch (params->type) {
         case FT_LPF:
-            flt->norm = 1 / (1 + K / flt->resonance + K * K);
-            flt->b[0] = K * K * flt->norm;
-            flt->b[1] = 2 * flt->b[0];
-            flt->b[2] = flt->b[0];
-            flt->a[1] = 2 * (K * K - 1) * flt->norm;
-            flt->a[2] = (1 - K / flt->resonance + K * K) * flt->norm;
+            params->norm = 1 / (1 + K / params->resonance + K * K);
+            params->b[0] = K * K * params->norm;
+            params->b[1] = 2 * params->b[0];
+            params->b[2] = params->b[0];
+            params->a[1] = 2 * (K * K - 1) * params->norm;
+            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
             break;
 
         case FT_HPF:
-            flt->norm = 1 / (1 + K / flt->resonance + K * K);
-            flt->b[0] = 1 * flt->norm;
-            flt->b[1] = -2 * flt->b[0];
-            flt->b[2] = flt->b[0];
-            flt->a[1] = 2 * (K * K - 1) * flt->norm;
-            flt->a[2] = (1 - K / flt->resonance + K * K) * flt->norm;
+            params->norm = 1 / (1 + K / params->resonance + K * K);
+            params->b[0] = 1 * params->norm;
+            params->b[1] = -2 * params->b[0];
+            params->b[2] = params->b[0];
+            params->a[1] = 2 * (K * K - 1) * params->norm;
+            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
             break;
 
         case FT_BPF:
-            flt->norm = 1 / (1 + K / flt->resonance + K * K);
-            flt->b[0] = K / flt->resonance * flt->norm;
-            flt->b[1] = 0;
-            flt->b[2] = -flt->b[0];
-            flt->a[1] = 2 * (K * K - 1) * flt->norm;
-            flt->a[2] = (1 - K / flt->resonance + K * K) * flt->norm;
+            params->norm = 1 / (1 + K / params->resonance + K * K);
+            params->b[0] = K / params->resonance * params->norm;
+            params->b[1] = 0;
+            params->b[2] = -params->b[0];
+            params->a[1] = 2 * (K * K - 1) * params->norm;
+            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
             break;
 
         default:
             break;
+    }
+
+    e = pthread_rwlock_unlock(&params->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+}
+
+void prepare_filter_display() {
+    Filter* flt = &g_s.flt;
+    FilterParams* params = &flt->params;
+
+    int e = pthread_rwlock_rdlock(&params->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
     }
 
     for (size_t i = 0; i < DISPLAY_BUFFER_SIZE; i++) {
@@ -358,56 +452,73 @@ void prepare_filter() {
         double complex z2 = cexp(-I * 2.0 * w);
 
         // H(z) = (b0 + b1*z^-1 + b2*z^-2) / (a0 + a1*z^-1 + a2*z^-2)
-        double complex num = flt->a[0] + flt->a[1] * z1 + flt->a[2] * z2;
-        double complex den = flt->b[0] + flt->b[1] * z1 + flt->b[2] * z2;
-
-        // double a = creal(num);
-        // double b = cimag(num);
-        // double c = creal(den);
-        // double d = cimag(den);
-        // double den_r = c*c+d*d;
+        double complex num = params->a[0] + params->a[1] * z1 + params->a[2] * z2;
+        double complex den = params->b[0] + params->b[1] * z1 + params->b[2] * z2;
 
         double nMag = cabs(num);
         double dMag = cabs(den);
 
-        // if (fabs(den_r) < EPSILON) {
-        //     flt->disp_buffer[i] = 0;
-        // } else {
-        //     double complex H = (a*c + b*d) / den_r + ((b*c - a*d) / den_r) * I;
-        // }
-        if (dMag < 1e-12) {
-            flt->disp_buffer[i] = 0.0f;
+        if (dMag < EPSILON) {
+            flt->disp_buffer[i] = -1.0f;
         } else {
             double magnitude = nMag / dMag;
 
-            // The magnitude is the absolute value of the complex result
             flt->disp_buffer[i] = Clamp(-log10f(magnitude), -1, 1);
         }
     }
+
+    e = pthread_rwlock_unlock(&params->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+}
+
+void prepare_filter() {
+    prepare_filter_params();
+    prepare_filter_display();
 }
 
 void init_synth() {
+    int e = 0;
     g_s.screen_w = GetScreenWidth();
     g_s.screen_h = GetScreenHeight();
 
     g_s.cur_tab = TAB_KEYS;
     g_s.cur_octave = 4;
-    g_s.amp = 0.2;
-    g_s.pan = 0.5f;
 
+    e = pthread_rwlock_init(&g_s.params.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+    g_s.params.amp = 0.2;
+    g_s.params.pan = 0.5f;
+
+    e = pthread_rwlock_init(&g_s.env.rw, NULL);
+    if (e != 0) {
+        return;
+    }
     g_s.env.attack = ENV_A_MIN;
     g_s.env.decay = ENV_D_MIN;
     g_s.env.sustain = 1.0f;
     g_s.env.release = ENV_R_MIN;
 
-    g_s.filter.type = FT_LPF;
-    g_s.filter.cutoff = FLT_CUTOFF_MAX;
-    g_s.filter.resonance = FLT_RESONANCE_MIN;
-    g_s.filter.gain = 0.0f;
+    e = pthread_rwlock_init(&g_s.flt.params.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+    g_s.flt.params.type = FT_LPF;
+    g_s.flt.params.cutoff = FLT_CUTOFF_MAX;
+    g_s.flt.params.resonance = FLT_RESONANCE_MIN;
+    g_s.flt.params.gain = 0.0f;
     prepare_filter();
 
-    g_s.osc.type = OT_SINE;
-    g_s.osc.semi = 0;
+    e = pthread_rwlock_init(&g_s.osc.params.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+    g_s.osc.params.type = OT_SINE;
+    g_s.osc.params.semi = 0;
     prepare_osc_display_buffer();
 
     prepare_keys();
@@ -416,6 +527,13 @@ void init_synth() {
 }
 
 void deinit_synth() {
+    int e = 0;
+    // TODO: Log
+    e = pthread_rwlock_destroy(&g_s.osc.params.rw);
+    e = pthread_rwlock_destroy(&g_s.flt.params.rw);
+    e = pthread_rwlock_destroy(&g_s.env.rw);
+    e = pthread_rwlock_destroy(&g_s.params.rw);
+
     UnloadAudioStream(g_s.stream);
     CloseAudioDevice();
 }
@@ -491,7 +609,7 @@ void clear_released_voices() {
                 g_s.voice_arr[i].time,
                 g_s.voice_arr[i].released,
                 g_s.voice_arr[i].release_time,
-                g_s.env);
+                &g_s.env);
 
         if (g_s.voice_arr[i].release_time && env_mul == 0) {
             clear_voice(i);
@@ -563,20 +681,28 @@ void process_keys() {
 }
 
 void update_osc() {
-    if (!IsAudioStreamProcessed(g_s.stream)) {
+    Osc* osc = &g_s.osc;
+    Env* env = &g_s.env;
+
+    for (int j = 0; j < BUFFER_SIZE; j++) {
+        osc->buffer[j] = 0;
+    }
+
+    int e = pthread_rwlock_rdlock(&osc->params.rw);
+    if (e != 0) {
+        // TODO: Log
         return;
     }
 
-    for (int j = 0; j < BUFFER_SIZE; j++) {
-        g_s.osc.buffer[j] = 0;
-    }
-
     for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
+        // TODO: make this constant
+        Voice *voice = &g_s.voice_arr[i];
+
+        if (voice->key_idx == KEY_IDX_INVALID) {
             break;
         }
 
-        int key_idx = g_s.voice_arr[i].key_idx + g_s.osc.semi;
+        int key_idx = voice->key_idx + osc->params.semi;
         if (key_idx < 0) {
             key_idx = 0;
         } else if (key_idx > KEY_COUNT) {
@@ -584,75 +710,113 @@ void update_osc() {
         }
 
         float wave_freq = g_s.key_arr[key_idx].freq;
-        float vel_mul = g_s.voice_arr[i].velocity / MAX_VELOCITY;
+        float vel_mul = voice->velocity / MAX_VELOCITY;
         float env_mul = 0.0f;
 
         for (int j = 0; j < BUFFER_SIZE; j++) {
             float wave_length = SAMPLE_RATE / wave_freq;
             float dt = j / (float)SAMPLE_RATE;
-            float kernel = get_osc_kernel(g_s.voice_arr[i].wave_idx, wave_length);
+            float kernel = get_osc_kernel(osc->params.type, voice->wave_idx, wave_length);
 
             env_mul = get_env_value(
-                    g_s.voice_arr[i].time + dt,
-                    g_s.voice_arr[i].released,
-                    g_s.voice_arr[i].release_time,
-                    g_s.env);
+                    voice->time + dt,
+                    voice->released,
+                    voice->release_time,
+                    env);
 
             // TODO: Mixer
-            g_s.osc.buffer[j] += env_mul * vel_mul * kernel;
-            g_s.voice_arr[i].wave_idx++;
-            if (g_s.voice_arr[i].wave_idx >= wave_length) {
-                g_s.voice_arr[i].wave_idx = 0;
+            osc->buffer[j] += env_mul * vel_mul * kernel;
+            voice->wave_idx++;
+            if (voice->wave_idx >= wave_length) {
+                voice->wave_idx = 0;
             }
         }
+    }
+
+    e = pthread_rwlock_unlock(&osc->params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
     }
 }
 
 void update_filter() {
-    Filter* flt = &g_s.filter;
+    Filter* flt = &g_s.flt;
+    const Osc *osc = &g_s.osc;
 
     for (size_t i = 0; i < ARRAY_SIZE(flt->buffer); i++) {
         flt->buffer[i] = 0.0f;
     }
 
+    int e = pthread_rwlock_rdlock(&flt->params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
     // Converts the buffer data before using it
-    const Osc *osc = &g_s.osc;
     for (size_t i = 0; i < ARRAY_SIZE(osc->buffer); i++) {
         // If there are multiple oscillaters, probably I should just sum them up first...
 
         // Move old state
-        // Y-1 -> Y-2
         flt->y[2] = flt->y[1];
-        // Y-0 -> Y-1
         flt->y[1] = flt->y[0];
 
-        // X-1 -> X-2
         flt->x[2] = flt->x[1];
-        // X-0 -> X-1
         flt->x[1] = flt->x[0];
 
         flt->x[0] = osc->buffer[i];
         flt->y[0] =
-            flt->a[0] * flt->x[0] +
-            flt->a[1] * flt->x[1] +
-            flt->a[2] * flt->x[2] -
-            flt->b[1] * flt->y[1] -
-            flt->b[2] * flt->y[2];
+            flt->params.a[0] * flt->x[0] +
+            flt->params.a[1] * flt->x[1] +
+            flt->params.a[2] * flt->x[2] -
+            flt->params.b[1] * flt->y[1] -
+            flt->params.b[2] * flt->y[2] +
+            EPSILON; // Anti-denormal offset
 
-        flt->buffer[i] += flt->y[0];
+        flt->buffer[i] = flt->y[0];
+    }
+
+    e = pthread_rwlock_unlock(&flt->params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
     }
 }
 
 void update_stream() {
-    if (!IsAudioStreamProcessed(g_s.stream)) {
+    int e = pthread_rwlock_rdlock(&g_s.params.rw);
+    if (e != 0) {
+        // TODO: Log
         return;
     }
 
     for (int i = 0; i < BUFFER_SIZE; i++) {
-        g_s.buffer[i] = g_s.amp * g_s.filter.buffer[i];
+        g_s.buffer[i] = g_s.params.amp * g_s.flt.buffer[i];
     }
 
-    UpdateAudioStream(g_s.stream, g_s.buffer, BUFFER_SIZE);
+    e = pthread_rwlock_unlock(&g_s.params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+}
+
+void audio_callback(void *_buffer, unsigned int frames) {
+    static int buffer_idx = BUFFER_SIZE;
+
+    float *out_buffer = (float *)_buffer;
+    for (size_t i = 0; i < frames; i++) {
+        if (buffer_idx >= BUFFER_SIZE) {
+            buffer_idx = 0;
+
+            update_osc();
+            update_filter();
+            update_stream();
+        }
+
+        out_buffer[i] = g_s.buffer[buffer_idx++];
+    }
 }
 
 void draw_voice_arr() {
@@ -706,74 +870,98 @@ void draw_fps() {
 
 void draw_tab_synth() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
-    SetDir(GD_HORIZONTAL);
 
-    DrawKnob("Amp", &cursor_p, KNOB_RADIUS, &g_s.amp, 0.0f, 1.0f);
-    if (DrawKnob("Pan", &cursor_p, KNOB_RADIUS, &g_s.pan, 0.0f, 1.0f)) {
-        SetAudioStreamPan(g_s.stream, g_s.pan);
-    }
+    SetDir(GD_HORIZONTAL);
+    DrawKnob("Amp", &cursor_p, KNOB_RADIUS, &g_s.params.amp, 0.0f, 1.0f, &g_s.params.rw);
+    DrawKnob("Pan", &cursor_p, KNOB_RADIUS, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
 }
 
 void draw_tab_osc() {
+    OscParams *params = &g_s.osc.params;
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
+    int e = 0;
 
     SetDir(GD_VERTICAL);
     if (DrawWave(&cursor_p, wave_s, g_s.osc.disp_buffer, ARRAY_SIZE(g_s.osc.disp_buffer))) {
-        g_s.osc.type++;
-        g_s.osc.type %= OT_MAX;
+        e = pthread_rwlock_wrlock(&params->rw);
+        if (e != 0) {
+            // TODO: Log
+            return;
+        }
+
+        params->type++;
+        params->type %= OT_MAX;
+
+        e = pthread_rwlock_unlock(&params->rw);
+        if (e != 0) {
+            // TODO: Log
+            return;
+        }
+
         prepare_osc_display_buffer();
     }
 
     SetDir(GD_HORIZONTAL);
-    DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &g_s.osc.semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE);
+    DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
 }
 
 void draw_tab_env() {
+    Env *env = &g_s.env;
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
 
     SetDir(GD_HORIZONTAL);
-    DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &g_s.env.attack, ENV_A_MIN, ENV_A_MAX);
-    DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &g_s.env.decay, ENV_D_MIN, ENV_D_MAX);
-    DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &g_s.env.sustain, 0.0f, 1.0f);
-    DrawKnob("Release", &cursor_p, KNOB_RADIUS, &g_s.env.release, ENV_R_MIN, ENV_R_MAX);
+    // TODO: Env wave
+    DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
+    DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
+    DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &env->sustain, 0.0f, 1.0f, &env->rw);
+    DrawKnob("Release", &cursor_p, KNOB_RADIUS, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
 }
 
 void draw_tab_filter() {
-    bool changed_type;
+    bool changed_type = false;
     bool changed = false;
+    FilterParams *params = &g_s.flt.params;
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
     Vector2 slider_s = {wave_s.x, SLIDER_SIZE_H};
 
     SetDir(GD_VERTICAL);
-    changed_type = DrawWave(&cursor_p, wave_s, g_s.filter.disp_buffer, DISPLAY_BUFFER_SIZE);
+    changed_type = DrawWave(&cursor_p, wave_s, g_s.flt.disp_buffer, DISPLAY_BUFFER_SIZE);
     if (changed_type) {
         changed |= true;
 
-        g_s.filter.type++;
-        g_s.filter.type %= FT_MAX;
+        int e = pthread_rwlock_wrlock(&params->rw);
+        if (e != 0) {
+            // TODO: Log
+            return;
+        }
+
+        params->type++;
+        params->type %= FT_MAX;
+
+        e = pthread_rwlock_unlock(&params->rw);
+        if (e != 0) {
+            // TODO: Log
+            return;
+        }
     }
 
-    DrawText(
-            TextFormat("Click to change type. Current type: %s", ft2str(g_s.filter.type)),
-            cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
-    cursor_p.y += FONT_SIZE + GUI_GAP;
+    // DrawText(
+    //         TextFormat("Click to change type. Current type: %s", ft2str(params->type)),
+    //         cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
+    // cursor_p.y += FONT_SIZE + GUI_GAP;
 
-    changed |= DrawSlider(&cursor_p, slider_s, &g_s.filter.cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
+    changed |= DrawSlider(&cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, &params->rw);
+
     SetDir(GD_HORIZONTAL);
-    changed |= DrawKnob("Resonance", &cursor_p, KNOB_RADIUS, &g_s.filter.resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX);
-    changed |= DrawKnob("Gain", &cursor_p, KNOB_RADIUS, &g_s.filter.gain, FLT_GAIN_MIN, FLT_GAIN_MAX);
+    changed |= DrawKnob("Resonance", &cursor_p, KNOB_RADIUS, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
+    changed |= DrawKnob("Gain", &cursor_p, KNOB_RADIUS, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
 
+    // Right now this is a bit dumb, IMO there should be a copied struct.
     if (changed) {
         prepare_filter();
     }
-
-    DrawText(
-            TextFormat("a0 %f\na1 %f\na2 %f\nb0 %f\nb1 %f\nb2 %f\n",
-            g_s.filter.a[0], g_s.filter.a[1], g_s.filter.a[2],
-            g_s.filter.b[0], g_s.filter.b[1], g_s.filter.b[2]),
-            cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
 }
 
 void draw_tab_keys() {
@@ -785,7 +973,7 @@ void draw_tab_keys() {
 
     cursor_p.x = g_s.screen_w - GUI_GAP - KNOB_SIZE_W;
     cursor_p.y = g_s.screen_h - GUI_GAP - KNOB_SIZE_H;
-    if (DrawKnobI("Octave", &cursor_p, KNOB_RADIUS, &g_s.cur_octave, 0, OCTAVE_COUNT - 2)) {
+    if (DrawKnobI("Octave", &cursor_p, KNOB_RADIUS, &g_s.cur_octave, 0, OCTAVE_COUNT - 2, NULL)) {
         prepare_keys();
     }
 
@@ -839,21 +1027,15 @@ void draw_ui() {
 
 int main(void) {
     InitWindow(WIN_SIZE_W, WIN_SIZE_H, "Synth");
+    SetTargetFPS(60);
 
     init_synth();
-
-    SetTargetFPS(60);
 
     while (!WindowShouldClose())
     {
         // Process
         process_ui();
         process_voice_arr();
-
-        // Update
-        update_osc();
-        update_filter();
-        update_stream();
 
         // Draw
         BeginDrawing();

@@ -3,6 +3,7 @@
 #include <raylib.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <pthread.h>
 
 #define WIN_SIZE_W             800
 #define WIN_SIZE_H             450
@@ -59,8 +60,10 @@ typedef enum GuiDirection {
 
 void SetDir(GuiDirection dir);
 
-bool DrawKnob(const char* label, Vector2 *cursor, float radius, float *value, float minValue, float maxValue);
-bool DrawKnobI(const char* label, Vector2 *cursor, float radius, int *value, int minValue, int maxValue);
+bool DrawKnob(const char* label, Vector2 *cursor, float radius, float *value, float minValue, float maxValue, pthread_rwlock_t *rw);
+bool DrawKnobI(const char* label, Vector2 *cursor, float radius, int *value, int minValue, int maxValue, pthread_rwlock_t *rw);
+bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue, pthread_rwlock_t *rw);
+
+// TODO: change bounds to 2 vectors
 bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIndex);
 bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size);
-bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue);

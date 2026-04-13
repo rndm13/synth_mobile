@@ -1,4 +1,5 @@
 #include "gui_elements.h"
+#include <pthread.h>
 #include <raymath.h>
 
 static GuiDirection g_dir = GD_VERTICAL;
@@ -9,15 +10,15 @@ void SetDir(GuiDirection dir) {
 
 // Draws a rotary knob and updates the value if the user interacts with it.
 // Returns true if the value was modified this frame.
-bool DrawKnob(const char *label, Vector2* cursor, float radius, float *value, float minValue, float maxValue) {
-    bool valueChanged = false;
-
+bool DrawKnob(const char *label, Vector2* cursor, float radius, float *value, float minValue, float maxValue, pthread_rwlock_t *rw) {
     // Define the visual arc limits in degrees.
     // In raylib, 0 is right, 90 is down.
     // 135 is bottom-left. 405 is bottom-right (360 + 45).
     const float startAngle = 135.0f;
     const float endAngle = 405.0f;
     const float angleRange = endAngle - startAngle;
+    float newValue = *value;
+    bool valueChanged = false;
 
     // 1. Handle Input
     Vector2 mousePos = GetMousePosition();
@@ -43,12 +44,7 @@ bool DrawKnob(const char *label, Vector2* cursor, float radius, float *value, fl
 
         // Map the angle back to a percentage (0.0 to 1.0) and then to the value range
         float percent = (angle - startAngle) / angleRange;
-        float newValue = minValue + percent * (maxValue - minValue);
-
-        if (*value != newValue) {
-            *value = newValue;
-            valueChanged = true;
-        }
+        newValue = minValue + percent * (maxValue - minValue);
     }
 
     // 2. Draw the visual components
@@ -84,18 +80,133 @@ bool DrawKnob(const char *label, Vector2* cursor, float radius, float *value, fl
         cursor->y += KNOB_SIZE_H;
     }
 
+    if (*value != newValue) {
+        int e = 0;
+        if (rw != NULL) {
+            e = pthread_rwlock_wrlock(rw);
+            if (e != 0) {
+                // TODO: Log
+                return false;
+            }
+        }
+
+        *value = newValue;
+
+        if (rw != NULL) {
+            e = pthread_rwlock_unlock(rw);
+            if (e != 0) {
+                // TODO: Log
+                return true;
+            }
+        }
+
+        valueChanged = true;
+    }
+
     return valueChanged;
 }
 
-bool DrawKnobI(const char *label, Vector2* cursor, float radius, int *value, int minValue, int maxValue) {
+bool DrawKnobI(const char *label, Vector2* cursor, float radius, int *value, int minValue, int maxValue, pthread_rwlock_t *rw) {
     float f_value = *value;
 
-    bool changed = DrawKnob(label, cursor, radius, &f_value, minValue, maxValue);
+    bool changed = DrawKnob(label, cursor, radius, &f_value, minValue, maxValue, NULL);
     if (changed) {
+        int e = 0;
+        if (rw != NULL) {
+            e = pthread_rwlock_wrlock(rw);
+            if (e != 0) {
+                // TODO: Log
+                return false;
+            }
+        }
+
         *value = round(f_value);
+
+        if (rw != NULL) {
+            e = pthread_rwlock_unlock(rw);
+            if (e != 0) {
+                // TODO: Log
+                return true;
+            }
+        }
     }
 
     return changed;
+}
+
+// Draws a slider and updates the value if the user interacts with it.
+// Returns true if the value was modified this frame.
+bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue, pthread_rwlock_t *rw) {
+    bool valueChanged = false;
+    float newValue = *value;
+    Rectangle bounds = {cursor->x, cursor->y, size.x, size.y};
+
+    // 1. Handle Input
+    Vector2 mousePos = GetMousePosition();
+    bool isHovering = CheckCollisionPointRec(mousePos, bounds);
+
+    // If the mouse is pressed or held down while over the slider bounds
+    if (isHovering && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        // Calculate where the mouse is relative to the width of the slider (0.0 to 1.0)
+        float percent = (mousePos.x - bounds.x) / bounds.width;
+
+        // Clamp the percentage to prevent the value from exceeding min/max limits
+        if (percent < 0.0f) percent = 0.0f;
+        if (percent > 1.0f) percent = 1.0f;
+
+        // Map the percentage back to the value range
+        newValue = minValue + percent * (maxValue - minValue);
+    }
+
+    // 2. Draw the visual components
+    // Draw the background track
+    DrawRectangleRec(bounds, SLIDER_INNER_COLOR);
+    DrawRectangleLinesEx(bounds, SLIDER_OUTER_THIKNESS, SLIDER_OUTER_COLOR);
+
+    // Calculate how much of the slider should be "filled"
+    float percentFilled = 0.0f;
+    if (maxValue > minValue) { // Prevent division by zero
+        percentFilled = (*value - minValue) / (maxValue - minValue);
+    }
+
+    // Draw the filled portion
+    Rectangle fillRec = { bounds.x, bounds.y, bounds.width * percentFilled, bounds.height };
+    DrawRectangleRec(fillRec, SLIDER_FILLED_COLOR);
+
+    // Draw the handle (thumb)
+    Rectangle handleRec = { bounds.x + fillRec.width - 5, bounds.y - 2, 10, bounds.height + 4 };
+    DrawRectangleRec(handleRec, SLIDER_THUMB_COLOR);
+
+    if (g_dir == GD_HORIZONTAL) {
+        cursor->x += size.x + GUI_GAP;
+    } else {
+        cursor->y += size.y + GUI_GAP;
+    }
+
+    if (*value != newValue) {
+        int e = 0;
+        if (rw != NULL) {
+            e = pthread_rwlock_wrlock(rw);
+            if (e != 0) {
+                // TODO: Log
+                return false;
+            }
+        }
+
+        *value = newValue;
+
+        if (rw != NULL) {
+            e = pthread_rwlock_unlock(rw);
+            if (e != 0) {
+                // TODO: Log
+                return true;
+            }
+        }
+
+        valueChanged = true;
+    }
+
+    return valueChanged;
 }
 
 bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIndex) {
@@ -175,60 +286,4 @@ bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size) {
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
 
     return clicked;
-}
-
-// Draws a slider and updates the value if the user interacts with it.
-// Returns true if the value was modified this frame.
-bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue) {
-    bool valueChanged = false;
-    Rectangle bounds = {cursor->x, cursor->y, size.x, size.y};
-
-    // 1. Handle Input
-    Vector2 mousePos = GetMousePosition();
-    bool isHovering = CheckCollisionPointRec(mousePos, bounds);
-
-    // If the mouse is pressed or held down while over the slider bounds
-    if (isHovering && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-        // Calculate where the mouse is relative to the width of the slider (0.0 to 1.0)
-        float percent = (mousePos.x - bounds.x) / bounds.width;
-
-        // Clamp the percentage to prevent the value from exceeding min/max limits
-        if (percent < 0.0f) percent = 0.0f;
-        if (percent > 1.0f) percent = 1.0f;
-
-        // Map the percentage back to the value range
-        float newValue = minValue + percent * (maxValue - minValue);
-
-        if (*value != newValue) {
-            *value = newValue;
-            valueChanged = true;
-        }
-    }
-
-    // 2. Draw the visual components
-    // Draw the background track
-    DrawRectangleRec(bounds, SLIDER_INNER_COLOR);
-    DrawRectangleLinesEx(bounds, SLIDER_OUTER_THIKNESS, SLIDER_OUTER_COLOR);
-
-    // Calculate how much of the slider should be "filled"
-    float percentFilled = 0.0f;
-    if (maxValue > minValue) { // Prevent division by zero
-        percentFilled = (*value - minValue) / (maxValue - minValue);
-    }
-
-    // Draw the filled portion
-    Rectangle fillRec = { bounds.x, bounds.y, bounds.width * percentFilled, bounds.height };
-    DrawRectangleRec(fillRec, SLIDER_FILLED_COLOR);
-
-    // Draw the handle (thumb)
-    Rectangle handleRec = { bounds.x + fillRec.width - 5, bounds.y - 2, 10, bounds.height + 4 };
-    DrawRectangleRec(handleRec, SLIDER_THUMB_COLOR);
-
-    if (g_dir == GD_HORIZONTAL) {
-        cursor->x += size.x + GUI_GAP;
-    } else {
-        cursor->y += size.y + GUI_GAP;
-    }
-
-    return valueChanged;
 }
