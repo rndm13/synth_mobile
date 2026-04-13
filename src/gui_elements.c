@@ -22,7 +22,7 @@ bool DrawKnob(const char *label, Vector2* cursor, float radius, float *value, fl
 
     // 1. Handle Input
     Vector2 mousePos = GetMousePosition();
-    Vector2 center = {cursor->x + KNOB_RADIUS, cursor->y + FONT_SIZE + GUI_GAP + KNOB_RADIUS} ;
+    Vector2 center = {cursor->x + KNOB_RADIUS, cursor->y + FONT_SIZE + GUI_GAP + KNOB_RADIUS};
 
     // Check if mouse is held down and within the knob's radius
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointCircle(mousePos, center, radius)) {

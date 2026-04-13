@@ -7,6 +7,7 @@
 #include <pthread.h>
 
 #include "gui_elements.h"
+#include "voice.h"
 
 #define SAMPLE_RATE   44100
 
@@ -38,9 +39,6 @@
 #define KEY_A4_FREQ 440.0f
 #define KEY_C4_IDX  (KEY_A4_IDX - 9)
 
-#define VOICES_MAX_COUNT 8
-
-#define KEY_IDX_INVALID -1
 
 #define DISPLAY_BUFFER_SIZE 256
 #define BUFFER_SIZE 4096
@@ -56,30 +54,12 @@
 #define X_STR_CASE(v, s) \
     case v: return s;
 
-#define RC_CAPACITY 0.1591549431f
-
 typedef struct Key {
     Vector2 pos;
     Vector2 size;
 
     float freq;
 } Key;
-
-// TODO: thread-safety
-typedef struct Voice {
-    // Initially set
-    int key_idx;
-    int velocity;
-
-    // Set during runtime.
-    // TODO: replace this with start time, not sure what to do with release time
-    float time;
-    float release_time;
-    bool released;
-
-    // TODO: move this to oscillator
-    int wave_idx;
-} Voice;
 
 typedef struct Env {
     pthread_rwlock_t rw;
@@ -102,6 +82,7 @@ typedef enum OscType {
 
 typedef struct OscParams {
     pthread_rwlock_t rw;
+
     OscType type;
     int semi;
 } OscParams;
@@ -109,6 +90,7 @@ typedef struct OscParams {
 typedef struct Osc {
     // RW protected
     OscParams params;
+    OscVoiceArr voice_arr;
 
     // Output
     float buffer[BUFFER_SIZE];
@@ -187,8 +169,6 @@ typedef struct Synth {
     int cur_octave;
     Key key_arr[KEY_COUNT];
 
-    Voice voice_arr[VOICES_MAX_COUNT];
-
     float buffer[BUFFER_SIZE];
     AudioStream stream;
 
@@ -197,11 +177,12 @@ typedef struct Synth {
     Osc osc;
     Env env;
     Filter flt;
+    VoiceArr voice_arr;
 } Synth;
 
 Synth g_s;
 
-float get_env_value(float time, bool released, float release_time, Env *env) {
+float get_env_value(float time, bool released, float release_time, float last_env, Env *env) {
     float result = 0.0f;
     int e = pthread_rwlock_rdlock(&env->rw);
     if (e != 0) {
@@ -217,11 +198,8 @@ float get_env_value(float time, bool released, float release_time, Env *env) {
             goto unlock;
         }
 
-        // We calculate the value starting from the sustain level down to 0
-        // TODO:
-        // (Note: For a perfect implementation, you'd track the exact amplitude at the
-        // moment of release, but using sustainLevel is the standard simplification).
-        result = env->sustain * (1.0f - (time_in_release / env->release));
+        // We calculate the value starting from the sustain level or previous env value down to 0
+        result = fmin(env->sustain * (1.0f - (time_in_release / env->release)), last_env);
         goto unlock;
     }
 
@@ -249,6 +227,7 @@ unlock:
         // TODO: Log
         return result;
     }
+
     return result;
 }
 
@@ -334,14 +313,6 @@ void prepare_keys() {
     }
 }
 
-void prepare_voices() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        g_s.voice_arr[i].key_idx = KEY_IDX_INVALID;
-        g_s.voice_arr[i].time = 0;
-        g_s.voice_arr[i].velocity = 0;
-        g_s.voice_arr[i].wave_idx = 0;
-    }
-}
 
 void audio_callback(void *_buffer, unsigned int frames);
 
@@ -491,6 +462,7 @@ void init_synth() {
     if (e != 0) {
         return;
     }
+    voice_arr_init(&g_s.voice_arr);
     g_s.params.amp = 0.2;
     g_s.params.pan = 0.5f;
 
@@ -517,12 +489,12 @@ void init_synth() {
     if (e != 0) {
         return;
     }
+    osc_voice_arr_init(&g_s.osc.voice_arr);
     g_s.osc.params.type = OT_SINE;
     g_s.osc.params.semi = 0;
     prepare_osc_display_buffer();
 
     prepare_keys();
-    prepare_voices();
     prepare_audio();
 }
 
@@ -534,96 +506,11 @@ void deinit_synth() {
     e = pthread_rwlock_destroy(&g_s.env.rw);
     e = pthread_rwlock_destroy(&g_s.params.rw);
 
+    voice_arr_deinit(&g_s.voice_arr);
+    osc_voice_arr_deinit(&g_s.osc.voice_arr);
+
     UnloadAudioStream(g_s.stream);
     CloseAudioDevice();
-}
-
-void set_voice(int v_idx, int k_idx) {
-    g_s.voice_arr[v_idx].key_idx = k_idx;
-    g_s.voice_arr[v_idx].time = 0.0f;
-    g_s.voice_arr[v_idx].velocity = 40;
-    g_s.voice_arr[v_idx].wave_idx = 0;
-    g_s.voice_arr[v_idx].released = false;
-    g_s.voice_arr[v_idx].release_time = 0.0f;
-}
-
-void reset_voice(int v_idx) {
-    g_s.voice_arr[v_idx].key_idx = KEY_IDX_INVALID;
-    g_s.voice_arr[v_idx].time = 0.0f;
-    g_s.voice_arr[v_idx].velocity = 0;
-    g_s.voice_arr[v_idx].wave_idx = 0;
-    g_s.voice_arr[v_idx].released = false;
-    g_s.voice_arr[v_idx].release_time = 0.0f;
-}
-
-void clear_voice(int v_idx) {
-    int size = 0;
-    for (; size < ARRAY_SIZE(g_s.voice_arr); size++) {
-        if (g_s.voice_arr[size].key_idx == KEY_IDX_INVALID) {
-            break;
-        }
-    }
-
-    // Replace with the last element
-    if (size != 0) {
-        g_s.voice_arr[v_idx] = g_s.voice_arr[size - 1];
-        reset_voice(size - 1);
-    }
-}
-
-void hold_voice(int idx) {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
-            set_voice(i, idx);
-            return;
-        }
-
-        if (g_s.voice_arr[i].key_idx == idx && !g_s.voice_arr[i].released) {
-            return;
-        }
-    }
-
-    // Shift voices left first and replace with the last index?
-    clear_voice(0);
-    set_voice(ARRAY_SIZE(g_s.voice_arr) - 1, idx);
-}
-
-void release_voice(int idx) {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        if (g_s.voice_arr[i].key_idx == idx && !g_s.voice_arr[i].released) {
-            g_s.voice_arr[i].released = true;
-            g_s.voice_arr[i].release_time = g_s.voice_arr[i].time;
-
-            break;
-        }
-    }
-}
-
-void clear_released_voices() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
-            return;
-        }
-
-        float env_mul = get_env_value(
-                g_s.voice_arr[i].time,
-                g_s.voice_arr[i].released,
-                g_s.voice_arr[i].release_time,
-                &g_s.env);
-
-        if (g_s.voice_arr[i].release_time && env_mul == 0) {
-            clear_voice(i);
-            return;
-        }
-    }
-}
-
-void process_voice_arr() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        g_s.voice_arr[i].time += GetFrameTime();
-    }
-
-    clear_released_voices();
 }
 
 void process_screen() {
@@ -637,12 +524,14 @@ bool point_rect_intersection(Vector2 p, Vector2 rp, Vector2 rs) {
 
 void process_keys() {
     static Vector2 touch_pos[MAX_TOUCH_POINTS] = { 0 };
-
+    VoiceArr *va = &g_s.voice_arr;
     int t_count = GetTouchPointCount();
+
     // Clamp touch points available ( set the maximum touch points allowed )
     if (t_count > MAX_TOUCH_POINTS) {
         t_count = MAX_TOUCH_POINTS;
     }
+
     // Get touch points positions
     for (int i = 0; i < t_count; i++) {
         touch_pos[i] = GetTouchPosition(i);
@@ -652,19 +541,22 @@ void process_keys() {
         for (int k = g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF; k < g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF + 2 * KEY_OCTAVE; k++) {
             Key key = g_s.key_arr[k];
             if (point_rect_intersection(touch_pos[i], key.pos, key.size)) {
-                hold_voice(k);
-                break; // Found a key for this touch. See next.
+                Voice new_voice = {0};
+                bool hold = voice_hold_key(va, k, &new_voice);
+                if (!hold) {
+                    // Newly added
+                    osc_voice_add(&g_s.osc.voice_arr, new_voice, GetTime());
+                }
+                break; // Found a key for this touch. See next touch.
             }
         }
     }
 
     // Release unheld keys
-    for (int v = 0; v < ARRAY_SIZE(g_s.voice_arr); v++) {
-        if (g_s.voice_arr[v].key_idx == KEY_IDX_INVALID) {
-            break;
-        }
+    pthread_rwlock_rdlock(&va->rw);
 
-        int k = g_s.voice_arr[v].key_idx;
+    for (int v = 0; v < va->voice_count; v++) {
+        int k = va->voice_arr[v].key_idx;
         Key key = g_s.key_arr[k];
         bool found = false;
         for (int i = 0; i < t_count; i++) {
@@ -675,13 +567,24 @@ void process_keys() {
         }
 
         if (!found) {
-            release_voice(k);
+            pthread_rwlock_unlock(&va->rw);
+
+            voice_remove(&g_s.voice_arr, v);
+            osc_voice_release(&g_s.osc.voice_arr, k, GetTime());
+
+            pthread_rwlock_rdlock(&va->rw);
         }
     }
+
+    osc_voice_gc(&g_s.osc.voice_arr);
+
+    pthread_rwlock_unlock(&va->rw);
 }
 
 void update_osc() {
     Osc* osc = &g_s.osc;
+    OscVoiceArr *ova = &osc->voice_arr;
+    VoiceArr *va = &g_s.voice_arr;
     Env* env = &g_s.env;
 
     for (int j = 0; j < BUFFER_SIZE; j++) {
@@ -694,15 +597,24 @@ void update_osc() {
         return;
     }
 
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
+    e = pthread_rwlock_rdlock(&va->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    e = pthread_rwlock_rdlock(&ova->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    for (int v = 0; v < ova->osc_voice_count; v++) {
         // TODO: make this constant
-        Voice *voice = &g_s.voice_arr[i];
+        OscVoice *osc_voice = &ova->osc_voice_arr[v];
+        Voice voice = osc_voice->voice;
 
-        if (voice->key_idx == KEY_IDX_INVALID) {
-            break;
-        }
-
-        int key_idx = voice->key_idx + osc->params.semi;
+        int key_idx = voice.key_idx + osc->params.semi;
         if (key_idx < 0) {
             key_idx = 0;
         } else if (key_idx > KEY_COUNT) {
@@ -710,30 +622,43 @@ void update_osc() {
         }
 
         float wave_freq = g_s.key_arr[key_idx].freq;
-        float vel_mul = voice->velocity / MAX_VELOCITY;
-        float env_mul = 0.0f;
+        float vel_mul = voice.velocity / MAX_VELOCITY;
+        float time = GetTime();
 
         for (int j = 0; j < BUFFER_SIZE; j++) {
             float wave_length = SAMPLE_RATE / wave_freq;
             float dt = j / (float)SAMPLE_RATE;
-            float kernel = get_osc_kernel(osc->params.type, voice->wave_idx, wave_length);
+            float kernel = get_osc_kernel(osc->params.type, osc_voice->wave_idx, wave_length);
 
-            env_mul = get_env_value(
-                    voice->time + dt,
-                    voice->released,
-                    voice->release_time,
+            osc_voice->env = get_env_value(
+                    time + dt,
+                    osc_voice->released,
+                    osc_voice->release_time,
+                    osc_voice->env,
                     env);
 
             // TODO: Mixer
-            osc->buffer[j] += env_mul * vel_mul * kernel;
-            voice->wave_idx++;
-            if (voice->wave_idx >= wave_length) {
-                voice->wave_idx = 0;
+            osc->buffer[j] += osc_voice->env * vel_mul * kernel;
+            osc_voice->wave_idx++;
+            if (osc_voice->wave_idx >= wave_length) {
+                osc_voice->wave_idx = 0;
             }
         }
     }
 
     e = pthread_rwlock_unlock(&osc->params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    e = pthread_rwlock_unlock(&va->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    e = pthread_rwlock_unlock(&ova->rw);
     if (e != 0) {
         // TODO: Log
         return;
@@ -820,20 +745,36 @@ void audio_callback(void *_buffer, unsigned int frames) {
 }
 
 void draw_voice_arr() {
-    for (int i = 0; i < ARRAY_SIZE(g_s.voice_arr); i++) {
-        if (g_s.voice_arr[i].key_idx == KEY_IDX_INVALID) {
-            break;
-        }
+    pthread_rwlock_rdlock(&g_s.voice_arr.rw);
 
-        int key_idx = g_s.voice_arr[i].key_idx;
-        float rel_time = g_s.voice_arr[i].release_time;
+    for (int i = 0; i < g_s.voice_arr.voice_count; i++) {
+        int key_idx = g_s.voice_arr.voice_arr[i].key_idx;
         float wave_freq = g_s.key_arr[key_idx].freq;
-        DrawText(TextFormat(
-                    "sine frequency: %.2f, key idx: %d, rel time:%.2f",
-                    wave_freq, key_idx, rel_time),
-                10, 10 + FONT_SIZE * i,
+        DrawText(
+                TextFormat("sine frequency: %.2f, key idx: %d", wave_freq, key_idx),
+                GUI_GAP, GUI_GAP + FONT_SIZE * i,
                 FONT_SIZE, RED);
     }
+
+    pthread_rwlock_unlock(&g_s.voice_arr.rw);
+
+    pthread_rwlock_rdlock(&g_s.osc.voice_arr.rw);
+
+    for (int i = 0; i < g_s.osc.voice_arr.osc_voice_count; i++) {
+        int k_idx = g_s.osc.voice_arr.osc_voice_arr[i].voice.key_idx;
+        bool released = g_s.osc.voice_arr.osc_voice_arr[i].released;
+        float release_time = g_s.osc.voice_arr.osc_voice_arr[i].release_time;
+        float env = g_s.osc.voice_arr.osc_voice_arr[i].env;
+        DrawText(
+                TextFormat(
+                    "key: %d, r: %d release: %.2f, env: %.2f",
+                    k_idx, released, release_time, env),
+                g_s.screen_w / 2 + GUI_GAP, GUI_GAP + FONT_SIZE * i,
+                FONT_SIZE, RED);
+    }
+
+    pthread_rwlock_unlock(&g_s.osc.voice_arr.rw);
+
 }
 
 void draw_keys() {
@@ -1035,7 +976,6 @@ int main(void) {
     {
         // Process
         process_ui();
-        process_voice_arr();
 
         // Draw
         BeginDrawing();
