@@ -584,7 +584,6 @@ void process_keys() {
 void update_osc() {
     Osc* osc = &g_s.osc;
     OscVoiceArr *ova = &osc->voice_arr;
-    VoiceArr *va = &g_s.voice_arr;
     Env* env = &g_s.env;
 
     for (int j = 0; j < BUFFER_SIZE; j++) {
@@ -597,12 +596,6 @@ void update_osc() {
         return;
     }
 
-    e = pthread_rwlock_rdlock(&va->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
     e = pthread_rwlock_rdlock(&ova->rw);
     if (e != 0) {
         // TODO: Log
@@ -610,7 +603,6 @@ void update_osc() {
     }
 
     for (int v = 0; v < ova->osc_voice_count; v++) {
-        // TODO: make this constant
         OscVoice *osc_voice = &ova->osc_voice_arr[v];
         Voice voice = osc_voice->voice;
 
@@ -623,7 +615,8 @@ void update_osc() {
 
         float wave_freq = g_s.key_arr[key_idx].freq;
         float vel_mul = voice.velocity / MAX_VELOCITY;
-        float time = GetTime();
+        float time = GetTime() - osc_voice->start_time;
+        float release_time = osc_voice->release_time - osc_voice->start_time;
 
         for (int j = 0; j < BUFFER_SIZE; j++) {
             float wave_length = SAMPLE_RATE / wave_freq;
@@ -631,11 +624,8 @@ void update_osc() {
             float kernel = get_osc_kernel(osc->params.type, osc_voice->wave_idx, wave_length);
 
             osc_voice->env = get_env_value(
-                    time + dt,
-                    osc_voice->released,
-                    osc_voice->release_time,
-                    osc_voice->env,
-                    env);
+                    time + dt, osc_voice->released,
+                    release_time, osc_voice->env, env);
 
             // TODO: Mixer
             osc->buffer[j] += osc_voice->env * vel_mul * kernel;
@@ -647,12 +637,6 @@ void update_osc() {
     }
 
     e = pthread_rwlock_unlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    e = pthread_rwlock_unlock(&va->rw);
     if (e != 0) {
         // TODO: Log
         return;
@@ -762,13 +746,13 @@ void draw_voice_arr() {
 
     for (int i = 0; i < g_s.osc.voice_arr.osc_voice_count; i++) {
         int k_idx = g_s.osc.voice_arr.osc_voice_arr[i].voice.key_idx;
-        bool released = g_s.osc.voice_arr.osc_voice_arr[i].released;
+        float start_time = g_s.osc.voice_arr.osc_voice_arr[i].start_time;
         float release_time = g_s.osc.voice_arr.osc_voice_arr[i].release_time;
         float env = g_s.osc.voice_arr.osc_voice_arr[i].env;
         DrawText(
                 TextFormat(
-                    "key: %d, r: %d release: %.2f, env: %.2f",
-                    k_idx, released, release_time, env),
+                    "key: %d, t: %.2f, r: %.2f, env: %.2f",
+                    k_idx, GetTime() - start_time, release_time - start_time, env),
                 g_s.screen_w / 2 + GUI_GAP, GUI_GAP + FONT_SIZE * i,
                 FONT_SIZE, RED);
     }
