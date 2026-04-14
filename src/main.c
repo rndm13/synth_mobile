@@ -87,6 +87,7 @@ typedef struct OscParams {
 
     OscType type;
     int semi;
+    float volume;
 } OscParams;
 
 typedef struct Osc {
@@ -472,6 +473,7 @@ void init_osc(Osc* osc) {
     osc_voice_arr_init(&osc->voice_arr);
     osc->params.type = OT_SINE;
     osc->params.semi = 0;
+    osc->params.volume = 1.0f;
     prepare_osc_display_buffer(osc);
 }
 
@@ -673,8 +675,7 @@ void update_osc(Osc* osc, Env* env) {
                     time + dt, osc_voice->released,
                     release_time, osc_voice->env, env);
 
-            // TODO: Mixer
-            osc->buffer[j] += osc_voice->env * vel_mul * kernel;
+            osc->buffer[j] += osc->params.volume * osc_voice->env * vel_mul * kernel;
             osc_voice->wave_idx++;
             if (osc_voice->wave_idx >= wave_length) {
                 osc_voice->wave_idx = 0;
@@ -877,6 +878,7 @@ void draw_tab_osc() {
 
         SetDir(GD_HORIZONTAL);
         DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
+        DrawKnob("Volume", &cursor_p, KNOB_RADIUS, &params->volume, 0.0f, 1.0f, &params->rw);
     }
 }
 
