@@ -39,6 +39,8 @@
 #define KEY_A4_FREQ 440.0f
 #define KEY_C4_IDX  (KEY_A4_IDX - 9)
 
+#define ENV_COUNT    2
+#define OSC_COUNT    2
 
 #define DISPLAY_BUFFER_SIZE 256
 #define BUFFER_SIZE 4096
@@ -174,8 +176,8 @@ typedef struct Synth {
 
     // Parameters
     SynthParams params;
-    Osc osc;
-    Env env;
+    Osc osc_arr[OSC_COUNT];
+    Env env_arr[ENV_COUNT];
     Filter flt;
     VoiceArr voice_arr;
 } Synth;
@@ -328,19 +330,19 @@ void prepare_audio() {
     SetAudioStreamCallback(g_s.stream, audio_callback);
 }
 
-void prepare_osc_display_buffer() {
-    int e = pthread_rwlock_rdlock(&g_s.osc.params.rw);
+void prepare_osc_display_buffer(Osc* osc) {
+    int e = pthread_rwlock_rdlock(&osc->params.rw);
     if (e != 0) {
         // TODO: Log
         return;
     }
 
-    int wave_length = ARRAY_SIZE(g_s.osc.disp_buffer);
+    int wave_length = ARRAY_SIZE(osc->disp_buffer);
     for (int i = 0; i < wave_length; i++) {
-        g_s.osc.disp_buffer[i] = get_osc_kernel(g_s.osc.params.type, i, wave_length / 2);
+        osc->disp_buffer[i] = get_osc_kernel(osc->params.type, i, wave_length / 2);
     }
 
-    e = pthread_rwlock_unlock(&g_s.osc.params.rw);
+    e = pthread_rwlock_unlock(&osc->params.rw);
     if (e != 0) {
         // TODO: Log
         return;
@@ -450,6 +452,29 @@ void prepare_filter() {
     prepare_filter_display();
 }
 
+void init_env(Env* env) {
+    int e = pthread_rwlock_init(&env->rw, NULL);
+    if (e != 0) {
+        return;
+    }
+
+    env->attack = ENV_A_MIN;
+    env->decay = ENV_D_MIN;
+    env->sustain = 1.0f;
+    env->release = ENV_R_MIN;
+}
+
+void init_osc(Osc* osc) {
+    int e = pthread_rwlock_init(&osc->params.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+    osc_voice_arr_init(&osc->voice_arr);
+    osc->params.type = OT_SINE;
+    osc->params.semi = 0;
+    prepare_osc_display_buffer(osc);
+}
+
 void init_synth() {
     int e = 0;
     g_s.screen_w = GetScreenWidth();
@@ -466,14 +491,13 @@ void init_synth() {
     g_s.params.amp = 0.2;
     g_s.params.pan = 0.5f;
 
-    e = pthread_rwlock_init(&g_s.env.rw, NULL);
-    if (e != 0) {
-        return;
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
+        init_env(&g_s.env_arr[i]);
     }
-    g_s.env.attack = ENV_A_MIN;
-    g_s.env.decay = ENV_D_MIN;
-    g_s.env.sustain = 1.0f;
-    g_s.env.release = ENV_R_MIN;
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        init_osc(&g_s.osc_arr[i]);
+    }
 
     e = pthread_rwlock_init(&g_s.flt.params.rw, NULL);
     if (e != 0) {
@@ -485,29 +509,35 @@ void init_synth() {
     g_s.flt.params.gain = 0.0f;
     prepare_filter();
 
-    e = pthread_rwlock_init(&g_s.osc.params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
-    osc_voice_arr_init(&g_s.osc.voice_arr);
-    g_s.osc.params.type = OT_SINE;
-    g_s.osc.params.semi = 0;
-    prepare_osc_display_buffer();
 
     prepare_keys();
     prepare_audio();
 }
 
+void deinit_env(Env* env) {
+    int e = pthread_rwlock_destroy(&env->rw);
+}
+
+void deinit_osc(Osc* osc) {
+    int e = pthread_rwlock_destroy(&osc->params.rw);
+    osc_voice_arr_deinit(&osc->voice_arr);
+}
+
 void deinit_synth() {
     int e = 0;
     // TODO: Log
-    e = pthread_rwlock_destroy(&g_s.osc.params.rw);
     e = pthread_rwlock_destroy(&g_s.flt.params.rw);
-    e = pthread_rwlock_destroy(&g_s.env.rw);
     e = pthread_rwlock_destroy(&g_s.params.rw);
 
     voice_arr_deinit(&g_s.voice_arr);
-    osc_voice_arr_deinit(&g_s.osc.voice_arr);
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
+        deinit_env(&g_s.env_arr[i]);
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        deinit_osc(&g_s.osc_arr[i]);
+    }
 
     UnloadAudioStream(g_s.stream);
     CloseAudioDevice();
@@ -520,6 +550,24 @@ void process_screen() {
 
 bool point_rect_intersection(Vector2 p, Vector2 rp, Vector2 rs) {
     return p.x >= rp.x && p.x <= rp.x + rs.x && p.y >= rp.y && p.y <= rp.y + rs.y;
+}
+
+void osc_arr_add_voice(Voice new_voice) {
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        osc_voice_add(&g_s.osc_arr[i].voice_arr, new_voice, GetTime());
+    }
+}
+
+void osc_arr_release_voice(int k_idx) {
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        osc_voice_release(&g_s.osc_arr[i].voice_arr, k_idx, GetTime());
+    }
+}
+
+void osc_arr_gc() {
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        osc_voice_gc(&g_s.osc_arr[i].voice_arr);
+    }
 }
 
 void process_keys() {
@@ -544,8 +592,7 @@ void process_keys() {
                 Voice new_voice = {0};
                 bool hold = voice_hold_key(va, k, &new_voice);
                 if (!hold) {
-                    // Newly added
-                    osc_voice_add(&g_s.osc.voice_arr, new_voice, GetTime());
+                    osc_arr_add_voice(new_voice);
                 }
                 break; // Found a key for this touch. See next touch.
             }
@@ -570,21 +617,20 @@ void process_keys() {
             pthread_rwlock_unlock(&va->rw);
 
             voice_remove(&g_s.voice_arr, v);
-            osc_voice_release(&g_s.osc.voice_arr, k, GetTime());
 
             pthread_rwlock_rdlock(&va->rw);
+
+            osc_arr_release_voice(k);
         }
     }
 
-    osc_voice_gc(&g_s.osc.voice_arr);
-
     pthread_rwlock_unlock(&va->rw);
+
+    osc_arr_gc();
 }
 
-void update_osc() {
-    Osc* osc = &g_s.osc;
+void update_osc(Osc* osc, Env* env) {
     OscVoiceArr *ova = &osc->voice_arr;
-    Env* env = &g_s.env;
 
     for (int j = 0; j < BUFFER_SIZE; j++) {
         osc->buffer[j] = 0;
@@ -651,10 +697,12 @@ void update_osc() {
 
 void update_filter() {
     Filter* flt = &g_s.flt;
-    const Osc *osc = &g_s.osc;
 
     for (size_t i = 0; i < ARRAY_SIZE(flt->buffer); i++) {
         flt->buffer[i] = 0.0f;
+        for (size_t j = 0; j < ARRAY_SIZE(g_s.osc_arr); j++) {
+            flt->buffer[i] += g_s.osc_arr[j].buffer[i];
+        }
     }
 
     int e = pthread_rwlock_rdlock(&flt->params.rw);
@@ -664,17 +712,14 @@ void update_filter() {
     }
 
     // Converts the buffer data before using it
-    for (size_t i = 0; i < ARRAY_SIZE(osc->buffer); i++) {
-        // If there are multiple oscillaters, probably I should just sum them up first...
-
+    for (size_t i = 0; i < ARRAY_SIZE(flt->buffer); i++) {
         // Move old state
         flt->y[2] = flt->y[1];
         flt->y[1] = flt->y[0];
-
         flt->x[2] = flt->x[1];
         flt->x[1] = flt->x[0];
 
-        flt->x[0] = osc->buffer[i];
+        flt->x[0] = flt->buffer[i];
         flt->y[0] =
             flt->params.a[0] * flt->x[0] +
             flt->params.a[1] * flt->x[1] +
@@ -719,7 +764,8 @@ void audio_callback(void *_buffer, unsigned int frames) {
         if (buffer_idx >= BUFFER_SIZE) {
             buffer_idx = 0;
 
-            update_osc();
+            update_osc(&g_s.osc_arr[0], &g_s.env_arr[0]);
+            update_osc(&g_s.osc_arr[1], &g_s.env_arr[1]);
             update_filter();
             update_stream();
         }
@@ -729,36 +775,35 @@ void audio_callback(void *_buffer, unsigned int frames) {
 }
 
 void draw_voice_arr() {
-    pthread_rwlock_rdlock(&g_s.voice_arr.rw);
+    // pthread_rwlock_rdlock(&g_s.voice_arr.rw);
 
-    for (int i = 0; i < g_s.voice_arr.voice_count; i++) {
-        int key_idx = g_s.voice_arr.voice_arr[i].key_idx;
-        float wave_freq = g_s.key_arr[key_idx].freq;
-        DrawText(
-                TextFormat("sine frequency: %.2f, key idx: %d", wave_freq, key_idx),
-                GUI_GAP, GUI_GAP + FONT_SIZE * i,
-                FONT_SIZE, RED);
-    }
+    // for (int i = 0; i < g_s.voice_arr.voice_count; i++) {
+    //     int key_idx = g_s.voice_arr.voice_arr[i].key_idx;
+    //     float wave_freq = g_s.key_arr[key_idx].freq;
+    //     DrawText(
+    //             TextFormat("sine frequency: %.2f, key idx: %d", wave_freq, key_idx),
+    //             GUI_GAP, GUI_GAP + FONT_SIZE * i,
+    //             FONT_SIZE, RED);
+    // }
 
-    pthread_rwlock_unlock(&g_s.voice_arr.rw);
+    // pthread_rwlock_unlock(&g_s.voice_arr.rw);
 
-    pthread_rwlock_rdlock(&g_s.osc.voice_arr.rw);
+    // pthread_rwlock_rdlock(&g_s.osc.voice_arr.rw);
 
-    for (int i = 0; i < g_s.osc.voice_arr.osc_voice_count; i++) {
-        int k_idx = g_s.osc.voice_arr.osc_voice_arr[i].voice.key_idx;
-        float start_time = g_s.osc.voice_arr.osc_voice_arr[i].start_time;
-        float release_time = g_s.osc.voice_arr.osc_voice_arr[i].release_time;
-        float env = g_s.osc.voice_arr.osc_voice_arr[i].env;
-        DrawText(
-                TextFormat(
-                    "key: %d, t: %.2f, r: %.2f, env: %.2f",
-                    k_idx, GetTime() - start_time, release_time - start_time, env),
-                g_s.screen_w / 2 + GUI_GAP, GUI_GAP + FONT_SIZE * i,
-                FONT_SIZE, RED);
-    }
+    // for (int i = 0; i < g_s.osc.voice_arr.osc_voice_count; i++) {
+    //     int k_idx = g_s.osc.voice_arr.osc_voice_arr[i].voice.key_idx;
+    //     float start_time = g_s.osc.voice_arr.osc_voice_arr[i].start_time;
+    //     float release_time = g_s.osc.voice_arr.osc_voice_arr[i].release_time;
+    //     float env = g_s.osc.voice_arr.osc_voice_arr[i].env;
+    //     DrawText(
+    //             TextFormat(
+    //                 "key: %d, t: %.2f, r: %.2f, env: %.2f",
+    //                 k_idx, GetTime() - start_time, release_time - start_time, env),
+    //             g_s.screen_w / 2 + GUI_GAP, GUI_GAP + FONT_SIZE * i,
+    //             FONT_SIZE, RED);
+    // }
 
-    pthread_rwlock_unlock(&g_s.osc.voice_arr.rw);
-
+    // pthread_rwlock_unlock(&g_s.osc.voice_arr.rw);
 }
 
 void draw_keys() {
@@ -802,45 +847,53 @@ void draw_tab_synth() {
 }
 
 void draw_tab_osc() {
-    OscParams *params = &g_s.osc.params;
-    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
-    int e = 0;
 
-    SetDir(GD_VERTICAL);
-    if (DrawWave(&cursor_p, wave_s, g_s.osc.disp_buffer, ARRAY_SIZE(g_s.osc.disp_buffer))) {
-        e = pthread_rwlock_wrlock(&params->rw);
-        if (e != 0) {
-            // TODO: Log
-            return;
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        Vector2 cursor_p = {GUI_GAP + i * (wave_s.x + GUI_GAP), TAB_H + 2 * GUI_GAP};
+        Osc *osc = &g_s.osc_arr[i];
+        OscParams *params = &osc->params;
+        int e = 0;
+
+        SetDir(GD_VERTICAL);
+        if (DrawWave(&cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer))) {
+            e = pthread_rwlock_wrlock(&params->rw);
+            if (e != 0) {
+                // TODO: Log
+                return;
+            }
+
+            params->type++;
+            params->type %= OT_MAX;
+
+            e = pthread_rwlock_unlock(&params->rw);
+            if (e != 0) {
+                // TODO: Log
+                return;
+            }
+
+            prepare_osc_display_buffer(osc);
         }
 
-        params->type++;
-        params->type %= OT_MAX;
-
-        e = pthread_rwlock_unlock(&params->rw);
-        if (e != 0) {
-            // TODO: Log
-            return;
-        }
-
-        prepare_osc_display_buffer();
+        SetDir(GD_HORIZONTAL);
+        DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
     }
-
-    SetDir(GD_HORIZONTAL);
-    DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
 }
 
 void draw_tab_env() {
-    Env *env = &g_s.env;
-    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
+    Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
 
-    SetDir(GD_HORIZONTAL);
-    // TODO: Env wave
-    DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
-    DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
-    DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &env->sustain, 0.0f, 1.0f, &env->rw);
-    DrawKnob("Release", &cursor_p, KNOB_RADIUS, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
+        Env *env = &g_s.env_arr[i];
+        Vector2 cursor_p = {GUI_GAP + i * (wave_s.x + GUI_GAP), TAB_H + 2 * GUI_GAP};
+
+        SetDir(GD_HORIZONTAL);
+        // TODO: Env wave
+        DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
+        DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
+        DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &env->sustain, 0.0f, 1.0f, &env->rw);
+        DrawKnob("Release", &cursor_p, KNOB_RADIUS, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
+    }
 }
 
 void draw_tab_filter() {
