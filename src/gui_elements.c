@@ -1,6 +1,7 @@
 #include "gui_elements.h"
 #include <pthread.h>
 #include <raymath.h>
+#include <math.h>
 
 static GuiDirection g_dir = GD_VERTICAL;
 
@@ -270,8 +271,15 @@ bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size) {
         int si = i * buf_size / size.x;
         int ei = (i + 1) * buf_size / size.x;
 
-        Vector2 s_pos = { cursor->x + i, cursor->y + size.y / 2 - size.y * buffer[si] / 2.1f };
-        Vector2 e_pos = { cursor->x + i + 1, cursor->y + size.y / 2 - size.y * buffer[ei] / 2.1f };
+        float min_amp = INFINITY;
+        float max_amp = -INFINITY;
+        for (int j = si; j <= ei; j++) {
+            max_amp = Clamp(fmax(buffer[j], max_amp), -1, 1);
+            min_amp = Clamp(fmin(buffer[j], min_amp), -1, 1);
+        }
+
+        Vector2 s_pos = { cursor->x + i, cursor->y + size.y / 2 - size.y * min_amp / 2.0f };
+        Vector2 e_pos = { cursor->x + i + 1, cursor->y + size.y / 2 - size.y * max_amp / 2.0f };
 
         DrawLineV(s_pos, e_pos, WAVE_LINE_COLOR);
     }

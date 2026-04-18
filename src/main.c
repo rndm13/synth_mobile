@@ -5,9 +5,11 @@
 #include <stddef.h>
 #include <complex.h>
 #include <pthread.h>
+#include <string.h>
 
 #include "gui_elements.h"
 #include "voice.h"
+#include "fft.h"
 
 #define SAMPLE_RATE   44100
 
@@ -44,6 +46,8 @@
 
 #define DISPLAY_BUFFER_SIZE 256
 #define BUFFER_SIZE 4096
+#define FFT_BUFFER_SIZE_MUL 4
+#define FFT_BUFFER_SIZE BUFFER_SIZE * FFT_BUFFER_SIZE_MUL
 
 #define MAX_VELOCITY 80.0f
 
@@ -172,6 +176,10 @@ typedef struct Synth {
     int cur_octave;
     Key key_arr[KEY_COUNT];
 
+    float buffer_fft[FFT_BUFFER_SIZE];
+    float buffer_fft_r[FFT_BUFFER_SIZE];
+    float buffer_fft_i[FFT_BUFFER_SIZE];
+    float buffer_fft_w[FFT_BUFFER_SIZE];
     float buffer[BUFFER_SIZE];
     AudioStream stream;
 
@@ -492,6 +500,9 @@ void init_synth() {
     voice_arr_init(&g_s.voice_arr);
     g_s.params.amp = 0.2;
     g_s.params.pan = 0.5f;
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.buffer_fft_w); i++) {
+        g_s.buffer_fft_w[i] = 0.5f * (1 - cos(2 * PI * i / (float)(BUFFER_SIZE - 1)));
+    }
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
         init_env(&g_s.env_arr[i]);
@@ -750,10 +761,31 @@ void update_stream() {
         g_s.buffer[i] = g_s.params.amp * g_s.flt.buffer[i];
     }
 
+    for (int i = 0; i < FFT_BUFFER_SIZE - BUFFER_SIZE; i++) {
+        g_s.buffer_fft[i] = g_s.buffer_fft[FFT_BUFFER_SIZE - 1 - i];
+    }
+
+    for (int i = 0; i < BUFFER_SIZE; i++) {
+        g_s.buffer_fft[i + (FFT_BUFFER_SIZE - 1 - BUFFER_SIZE)] = g_s.buffer[i];
+    }
+
     e = pthread_rwlock_unlock(&g_s.params.rw);
     if (e != 0) {
         // TODO: Log
         return;
+    }
+}
+
+void update_fft() {
+    for (size_t i = 0; i < FFT_BUFFER_SIZE; i++) {
+        g_s.buffer_fft_r[i] = g_s.buffer_fft[i] * g_s.buffer_fft_w[i];
+        g_s.buffer_fft_i[i] = 0.0f;
+    }
+
+    fft(g_s.buffer_fft_r, g_s.buffer_fft_i, FFT_BUFFER_SIZE);
+
+    for (size_t i = 0; i < FFT_BUFFER_SIZE / 2; i++) {
+        g_s.buffer_fft_r[i] = sqrt(powf(g_s.buffer_fft_r[i], 2) + powf(g_s.buffer_fft_i[i], 2)) / (BUFFER_SIZE / 2.0);
     }
 }
 
@@ -948,7 +980,7 @@ void draw_tab_keys() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
 
-    DrawWave(&cursor_p, wave_s, g_s.buffer, BUFFER_SIZE);
+    DrawWave(&cursor_p, wave_s, g_s.buffer_fft_r, ARRAY_SIZE(g_s.buffer_fft_r) / 2);
     draw_keys();
 
     cursor_p.x = g_s.screen_w - GUI_GAP - KNOB_SIZE_W;
@@ -1015,6 +1047,9 @@ int main(void) {
     {
         // Process
         process_ui();
+
+        // Update
+        update_fft();
 
         // Draw
         BeginDrawing();
