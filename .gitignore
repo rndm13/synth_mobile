@@ -6,3 +6,4 @@ raylib/*
 build
 android/build/
 game.apk
+.venv

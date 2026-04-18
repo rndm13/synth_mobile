@@ -6,14 +6,23 @@
 #include <complex.h>
 #include <pthread.h>
 #include <string.h>
+#include <time.h>
 
 #include "gui_elements.h"
 #include "voice.h"
 #include "fft.h"
 
-#define SAMPLE_RATE   44100
+#define SAMPLE_RATE    48000
 
-#define ARRAY_SIZE(X) (sizeof(X) / sizeof(*(X)))
+#define MS_IN_S        1000
+#define NS_IN_MS       (1000 * 1000)
+#define NS_IN_S        (1000 * 1000 * 1000)
+
+#define S_TO_MS(X)     ((X) * MS_IN_S)
+#define NS_TO_MS(X)    ((X) / NS_IN_MS)
+#define S_TO_NS(X)     ((X) * NS_IN_S)
+
+#define ARRAY_SIZE(X)  (sizeof(X) / sizeof(*(X)))
 
 #define OSC_SEMI_RANGE 12
 
@@ -24,13 +33,19 @@
 #define ENV_R_MIN 0.1f
 #define ENV_R_MAX 5.0f
 
-#define FLT_OVERSAMPLING  2
-#define FLT_CUTOFF_MIN    50.0f
-#define FLT_CUTOFF_MAX    (SAMPLE_RATE / 2.0f)
-#define FLT_RESONANCE_MIN 0.7071f
-#define FLT_RESONANCE_MAX 20.0f
-#define FLT_GAIN_MIN      -20.0f
-#define FLT_GAIN_MAX      20.0f
+#define FLT_SAFE_CUTOFF_COEF 0.45
+#define FLT_FIR_TAPS         21
+#define FLT_FIR_CUTOFF       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
+
+#define FLT_OVERSAMPLING     4
+#define FLT_OVERSAMPLED_RATE (SAMPLE_RATE * FLT_OVERSAMPLING)
+
+#define FLT_CUTOFF_MIN       100.0f
+#define FLT_CUTOFF_MAX       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
+#define FLT_RESONANCE_MIN    0.5f
+#define FLT_RESONANCE_MAX    20.0f
+#define FLT_GAIN_MIN         -20.0f
+#define FLT_GAIN_MAX         20.0f
 
 #define KEY_C_OFF    4
 #define OCTAVE_COUNT 8
@@ -46,7 +61,7 @@
 
 #define DISPLAY_BUFFER_SIZE 256
 #define BUFFER_SIZE 4096
-#define FFT_BUFFER_SIZE_MUL 4
+#define FFT_BUFFER_SIZE_MUL 2
 #define FFT_BUFFER_SIZE BUFFER_SIZE * FFT_BUFFER_SIZE_MUL
 
 #define MAX_VELOCITY 80.0f
@@ -59,6 +74,8 @@
 
 #define X_STR_CASE(v, s) \
     case v: return s;
+
+typedef struct timespec timespec_t;
 
 typedef struct Key {
     Vector2 pos;
@@ -100,7 +117,6 @@ typedef struct Osc {
     OscVoiceArr voice_arr;
 
     // Output
-    float buffer[BUFFER_SIZE];
     float disp_buffer[DISPLAY_BUFFER_SIZE];
 } Osc;
 
@@ -108,6 +124,7 @@ typedef struct Osc {
     X(FT_LPF, "Low-pass filter")  \
     X(FT_HPF, "High-pass filter") \
     X(FT_BPF, "Band-pass filter") \
+    X(FT_DISABLED, "Disabled")    \
 
 typedef enum FilterType {
     FLT_TYPE_X(X_ENUM)
@@ -137,6 +154,13 @@ typedef struct FilterParams {
     double b[3]; // Zeros
 } FilterParams;
 
+typedef struct FIRFilter {
+    float coeffs[FLT_FIR_TAPS];
+    float windows[FLT_FIR_TAPS];
+    // TODO: Make this a circular buffer
+    float history[FLT_FIR_TAPS];
+} FIRFilter;
+
 typedef struct Filter {
     // RW protected
     FilterParams params;
@@ -144,10 +168,12 @@ typedef struct Filter {
     // Filter state
     double x[3];
     double y[3];
+    FIRFilter fir_up;
+    FIRFilter fir_down;
 
     // Filter output
     float disp_buffer[DISPLAY_BUFFER_SIZE];
-    float buffer[BUFFER_SIZE];
+    float oversampled_buffer[BUFFER_SIZE * FLT_OVERSAMPLING];
 } Filter;
 
 #define TAB_X(X)                \
@@ -167,6 +193,12 @@ typedef struct SynthParams {
     float pan;
 } SynthParams;
 
+typedef struct SynthProfiling {
+    timespec_t osc_time[OSC_COUNT];
+    timespec_t flt_time;
+    timespec_t total_time;
+} SynthProfiling;
+
 typedef struct Synth {
     int screen_w;
     int screen_h;
@@ -176,11 +208,11 @@ typedef struct Synth {
     int cur_octave;
     Key key_arr[KEY_COUNT];
 
+    size_t buffer_fft_idx;
     float buffer_fft[FFT_BUFFER_SIZE];
     float buffer_fft_r[FFT_BUFFER_SIZE];
     float buffer_fft_i[FFT_BUFFER_SIZE];
     float buffer_fft_w[FFT_BUFFER_SIZE];
-    float buffer[BUFFER_SIZE];
     AudioStream stream;
 
     // Parameters
@@ -189,6 +221,8 @@ typedef struct Synth {
     Env env_arr[ENV_COUNT];
     Filter flt;
     VoiceArr voice_arr;
+
+    SynthProfiling prof;
 } Synth;
 
 Synth g_s;
@@ -327,7 +361,7 @@ void prepare_keys() {
 
 void audio_callback(void *_buffer, unsigned int frames);
 
-void prepare_audio() {
+void init_audio() {
     InitAudioDevice();
 
     // Set the number of samples the stream will keep in memory at a time to BUFFER_SIZE
@@ -369,12 +403,12 @@ void prepare_filter_params() {
     }
 
     // double V = powf(10, fabs(params->gain) / 20);
-    double K = tan(PI * params->cutoff / SAMPLE_RATE);
+    double K = tan(PI * params->cutoff / (double)FLT_OVERSAMPLED_RATE);
 
-    // for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
-    //     flt->x[i] = 0;
-    //     flt->y[i] = 0;
-    // }
+    for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
+        flt->x[i] = 0;
+        flt->y[i] = 0;
+    }
 
     params->a[0] = 1;
     switch (params->type) {
@@ -405,6 +439,15 @@ void prepare_filter_params() {
             params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
             break;
 
+        case FT_DISABLED:
+            params->norm = 0;
+            params->b[0] = 0;
+            params->b[1] = 0;
+            params->b[2] = 0;
+            params->a[1] = 0;
+            params->a[2] = 0;
+            break;
+
         default:
             break;
     }
@@ -427,8 +470,15 @@ void prepare_filter_display() {
     }
 
     for (size_t i = 0; i < DISPLAY_BUFFER_SIZE; i++) {
+        if (params->type == FT_DISABLED) {
+            flt->disp_buffer[i] = 0.0f;
+            continue;
+        }
+
+        double freq = FLT_CUTOFF_MIN * powf(FLT_CUTOFF_MAX / FLT_CUTOFF_MIN, (double)(i) / (DISPLAY_BUFFER_SIZE - 1));
+
         // Current frequency in radians (0 to PI)
-        double w = PI * (double)i / DISPLAY_BUFFER_SIZE;
+        double w = 2.0 * PI * freq / FLT_OVERSAMPLED_RATE;
 
         double complex z1 = cexp(-I * w);
         double complex z2 = cexp(-I * 2.0 * w);
@@ -485,6 +535,48 @@ void init_osc(Osc* osc) {
     prepare_osc_display_buffer(osc);
 }
 
+void init_fir_filter(FIRFilter* fir, float sample_rate) {
+    double ft = FLT_FIR_CUTOFF / sample_rate;
+    double sum = 0;
+
+    for (int i = 0; i < FLT_FIR_TAPS; i++) {
+        int n = i - (FLT_FIR_TAPS - 1) / 2;
+
+        // The Sinc function
+        if (n == 0) {
+            fir->coeffs[i] = 2.0f * ft;
+        } else {
+            fir->coeffs[i] = sinf(2.0f * PI * ft * n) / (PI * n);
+        }
+
+        // Apply Hamming Window
+        float window = 0.54f - 0.46f * cosf(2.0f * PI * i / (FLT_FIR_TAPS - 1));
+        fir->coeffs[i] *= window;
+
+        sum += fir->coeffs[i];
+    }
+
+    // Normalize coefficients so the gain is 1.0 (0dB)
+    for (int i = 0; i < FLT_FIR_TAPS; i++) {
+        fir->coeffs[i] /= sum;
+    }
+}
+
+void init_filter(Filter *flt) {
+    int e = pthread_rwlock_init(&flt->params.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+    flt->params.type = FT_LPF;
+    flt->params.cutoff = FLT_CUTOFF_MAX;
+    flt->params.resonance = FLT_RESONANCE_MIN;
+    flt->params.gain = 0.0f;
+    init_fir_filter(&flt->fir_up, FLT_OVERSAMPLED_RATE);
+    init_fir_filter(&flt->fir_down, FLT_OVERSAMPLED_RATE);
+
+    prepare_filter();
+}
+
 void init_synth() {
     int e = 0;
     g_s.screen_w = GetScreenWidth();
@@ -500,8 +592,9 @@ void init_synth() {
     voice_arr_init(&g_s.voice_arr);
     g_s.params.amp = 0.2;
     g_s.params.pan = 0.5f;
+    g_s.buffer_fft_idx = 0;
     for (size_t i = 0; i < ARRAY_SIZE(g_s.buffer_fft_w); i++) {
-        g_s.buffer_fft_w[i] = 0.5f * (1 - cos(2 * PI * i / (float)(BUFFER_SIZE - 1)));
+        g_s.buffer_fft_w[i] = 0.5f * (1 - cos(2 * PI * i / (float)(FFT_BUFFER_SIZE - 1)));
     }
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
@@ -512,19 +605,10 @@ void init_synth() {
         init_osc(&g_s.osc_arr[i]);
     }
 
-    e = pthread_rwlock_init(&g_s.flt.params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
-    g_s.flt.params.type = FT_LPF;
-    g_s.flt.params.cutoff = FLT_CUTOFF_MAX;
-    g_s.flt.params.resonance = FLT_RESONANCE_MIN;
-    g_s.flt.params.gain = 0.0f;
-    prepare_filter();
-
+    init_filter(&g_s.flt);
 
     prepare_keys();
-    prepare_audio();
+    init_audio();
 }
 
 void deinit_env(Env* env) {
@@ -642,17 +726,17 @@ void process_keys() {
     osc_arr_gc();
 }
 
-void update_osc(Osc* osc, Env* env) {
+void update_osc(Osc* osc, Env* env, float* buffer, size_t n) {
     OscVoiceArr *ova = &osc->voice_arr;
-
-    for (int j = 0; j < BUFFER_SIZE; j++) {
-        osc->buffer[j] = 0;
-    }
 
     int e = pthread_rwlock_rdlock(&osc->params.rw);
     if (e != 0) {
         // TODO: Log
         return;
+    }
+
+    if (FloatEquals(osc->params.volume, 0.0f)) {
+        goto params_unlock;
     }
 
     e = pthread_rwlock_rdlock(&ova->rw);
@@ -677,7 +761,7 @@ void update_osc(Osc* osc, Env* env) {
         float time = GetTime() - osc_voice->start_time;
         float release_time = osc_voice->release_time - osc_voice->start_time;
 
-        for (int j = 0; j < BUFFER_SIZE; j++) {
+        for (int j = 0; j < n; j++) {
             float wave_length = SAMPLE_RATE / wave_freq;
             float dt = j / (float)SAMPLE_RATE;
             float kernel = get_osc_kernel(osc->params.type, osc_voice->wave_idx, wave_length);
@@ -686,7 +770,7 @@ void update_osc(Osc* osc, Env* env) {
                     time + dt, osc_voice->released,
                     release_time, osc_voice->env, env);
 
-            osc->buffer[j] += osc->params.volume * osc_voice->env * vel_mul * kernel;
+            buffer[j] += osc->params.volume * osc_voice->env * vel_mul * kernel;
             osc_voice->wave_idx++;
             if (osc_voice->wave_idx >= wave_length) {
                 osc_voice->wave_idx = 0;
@@ -694,28 +778,61 @@ void update_osc(Osc* osc, Env* env) {
         }
     }
 
+    e = pthread_rwlock_unlock(&ova->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+params_unlock:
     e = pthread_rwlock_unlock(&osc->params.rw);
     if (e != 0) {
         // TODO: Log
         return;
     }
 
-    e = pthread_rwlock_unlock(&ova->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
+}
+
+float update_fir_filter(FIRFilter *fir, float input) {
+    for (int i = FLT_FIR_TAPS - 1; i > 0; i--) {
+        fir->history[i] = fir->history[i - 1];
+    }
+    fir->history[0] = input;
+
+    float output = 0;
+    for (int i = 0; i < FLT_FIR_TAPS; i++) {
+        output += fir->history[i] * fir->coeffs[i];
+    }
+
+    return output;
+}
+
+void upsample_filter_u(Filter* flt, float* buffer, size_t n) {
+    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
+        flt->oversampled_buffer[i] = 0.0f;
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        flt->oversampled_buffer[i * FLT_OVERSAMPLING] += buffer[i] * FLT_OVERSAMPLING;
+    }
+
+    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
+        flt->oversampled_buffer[i] = update_fir_filter(&flt->fir_up, flt->oversampled_buffer[i]);
     }
 }
 
-void update_filter() {
-    Filter* flt = &g_s.flt;
-
-    for (size_t i = 0; i < ARRAY_SIZE(flt->buffer); i++) {
-        flt->buffer[i] = 0.0f;
-        for (size_t j = 0; j < ARRAY_SIZE(g_s.osc_arr); j++) {
-            flt->buffer[i] += g_s.osc_arr[j].buffer[i];
-        }
+void downsample_filter_u(Filter* flt, float* buffer, size_t n) {
+    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
+        flt->oversampled_buffer[i] = update_fir_filter(&flt->fir_down, flt->oversampled_buffer[i]);
     }
+
+    for (size_t i = 0; i < n; i++) {
+        buffer[i] = flt->oversampled_buffer[i * FLT_OVERSAMPLING];
+    }
+}
+
+void update_filter(float* buffer, size_t n) {
+    Filter* flt = &g_s.flt;
 
     int e = pthread_rwlock_rdlock(&flt->params.rw);
     if (e != 0) {
@@ -723,15 +840,21 @@ void update_filter() {
         return;
     }
 
+    if (flt->params.type == FT_DISABLED) {
+        goto unlock;
+    }
+
+    upsample_filter_u(flt, buffer, n);
+
     // Converts the buffer data before using it
-    for (size_t i = 0; i < ARRAY_SIZE(flt->buffer); i++) {
+    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
         // Move old state
         flt->y[2] = flt->y[1];
         flt->y[1] = flt->y[0];
         flt->x[2] = flt->x[1];
         flt->x[1] = flt->x[0];
 
-        flt->x[0] = flt->buffer[i];
+        flt->x[0] = flt->oversampled_buffer[i];
         flt->y[0] =
             flt->params.a[0] * flt->x[0] +
             flt->params.a[1] * flt->x[1] +
@@ -740,9 +863,12 @@ void update_filter() {
             flt->params.b[2] * flt->y[2] +
             EPSILON; // Anti-denormal offset
 
-        flt->buffer[i] = flt->y[0];
+        flt->oversampled_buffer[i] = flt->y[0];
     }
 
+    downsample_filter_u(flt, buffer, n);
+
+unlock:
     e = pthread_rwlock_unlock(&flt->params.rw);
     if (e != 0) {
         // TODO: Log
@@ -750,23 +876,21 @@ void update_filter() {
     }
 }
 
-void update_stream() {
+void update_stream(float* buffer, size_t n) {
     int e = pthread_rwlock_rdlock(&g_s.params.rw);
     if (e != 0) {
         // TODO: Log
         return;
     }
 
-    for (int i = 0; i < BUFFER_SIZE; i++) {
-        g_s.buffer[i] = g_s.params.amp * g_s.flt.buffer[i];
+    for (int i = 0; i < n; i++) {
+        buffer[i] = g_s.params.amp * buffer[i];
     }
 
-    for (int i = 0; i < FFT_BUFFER_SIZE - BUFFER_SIZE; i++) {
-        g_s.buffer_fft[i] = g_s.buffer_fft[FFT_BUFFER_SIZE - 1 - i];
-    }
-
-    for (int i = 0; i < BUFFER_SIZE; i++) {
-        g_s.buffer_fft[i + (FFT_BUFFER_SIZE - 1 - BUFFER_SIZE)] = g_s.buffer[i];
+    for (int i = 0; i < n; i++) {
+        g_s.buffer_fft[g_s.buffer_fft_idx] = buffer[i];
+        g_s.buffer_fft_idx++;
+        g_s.buffer_fft_idx %= FFT_BUFFER_SIZE;
     }
 
     e = pthread_rwlock_unlock(&g_s.params.rw);
@@ -777,34 +901,89 @@ void update_stream() {
 }
 
 void update_fft() {
+    size_t buffer_fft_idx = g_s.buffer_fft_idx;
     for (size_t i = 0; i < FFT_BUFFER_SIZE; i++) {
-        g_s.buffer_fft_r[i] = g_s.buffer_fft[i] * g_s.buffer_fft_w[i];
+        // This is unsafe for now...
+        g_s.buffer_fft_r[i] = g_s.buffer_fft[(i + buffer_fft_idx) % FFT_BUFFER_SIZE] * g_s.buffer_fft_w[i];
         g_s.buffer_fft_i[i] = 0.0f;
     }
 
     fft(g_s.buffer_fft_r, g_s.buffer_fft_i, FFT_BUFFER_SIZE);
 
     for (size_t i = 0; i < FFT_BUFFER_SIZE / 2; i++) {
-        g_s.buffer_fft_r[i] = sqrt(powf(g_s.buffer_fft_r[i], 2) + powf(g_s.buffer_fft_i[i], 2)) / (BUFFER_SIZE / 2.0);
+        g_s.buffer_fft_r[i] = sqrt(powf(g_s.buffer_fft_r[i], 2) + powf(g_s.buffer_fft_i[i], 2)) / (BUFFER_SIZE / 16.0);
     }
+
+    // float max_value = 0.0f;
+    // for (size_t i = 0; i < FFT_BUFFER_SIZE / 2; i++) {
+    //     max_value = fmax(max_value, g_s.buffer_fft_r[i]);
+    // }
+    //
+    // if (!FloatEquals(max_value, 0)) {
+    //     for (size_t i = 0; i < FFT_BUFFER_SIZE / 2; i++) {
+    //         g_s.buffer_fft_r[i] /= max_value;
+    //     }
+    // }
+}
+
+timespec_t duration_from(timespec_t start_time) {
+    timespec_t end_time = {0};
+    timespec_get(&end_time, TIME_UTC);
+
+    end_time.tv_sec -= start_time.tv_sec;
+    end_time.tv_nsec -= start_time.tv_nsec;
+
+    end_time.tv_nsec += S_TO_NS(end_time.tv_sec);
+    end_time.tv_sec = 0;
+
+    return end_time;
+}
+
+void update_synth(float* buffer, size_t n) {
+    timespec_t start_time = {0};
+    timespec_t section_time = {0};
+
+    for (size_t i = 0; i < n; i++) {
+        buffer[i] = 0.0f;
+    }
+
+    timespec_get(&start_time, TIME_UTC);
+
+    timespec_get(&section_time, TIME_UTC);
+    update_osc(&g_s.osc_arr[0], &g_s.env_arr[0], buffer, n);
+    g_s.prof.osc_time[0] = duration_from(section_time);
+
+    timespec_get(&section_time, TIME_UTC);
+    update_osc(&g_s.osc_arr[1], &g_s.env_arr[1], buffer, n);
+    g_s.prof.osc_time[1] = duration_from(section_time);
+
+    timespec_get(&section_time, TIME_UTC);
+    update_filter(buffer, n);
+    g_s.prof.flt_time = duration_from(section_time);
+
+    timespec_get(&section_time, TIME_UTC);
+    update_stream(buffer, n);
+    g_s.prof.total_time = duration_from(start_time);
 }
 
 void audio_callback(void *_buffer, unsigned int frames) {
-    static int buffer_idx = BUFFER_SIZE;
-
     float *out_buffer = (float *)_buffer;
-    for (size_t i = 0; i < frames; i++) {
-        if (buffer_idx >= BUFFER_SIZE) {
-            buffer_idx = 0;
+    update_synth(out_buffer, frames);
+}
 
-            update_osc(&g_s.osc_arr[0], &g_s.env_arr[0]);
-            update_osc(&g_s.osc_arr[1], &g_s.env_arr[1]);
-            update_filter();
-            update_stream();
-        }
-
-        out_buffer[i] = g_s.buffer[buffer_idx++];
-    }
+void draw_profiling_stats() {
+    DrawText(
+            TextFormat(
+                "osc0: %d\n"
+                "osc1: %d\n"
+                "flt0: %d\n"
+                "total: %d\n",
+                NS_TO_MS(g_s.prof.osc_time[0].tv_nsec),
+                NS_TO_MS(g_s.prof.osc_time[1].tv_nsec),
+                NS_TO_MS(g_s.prof.flt_time.tv_nsec),
+                NS_TO_MS(g_s.prof.total_time.tv_nsec)),
+            GUI_GAP, GUI_GAP + FONT_SIZE,
+            FONT_SIZE, RED);
 }
 
 void draw_voice_arr() {
@@ -881,6 +1060,7 @@ void draw_tab_synth() {
 
 void draw_tab_osc() {
     Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
+    static bool show_fft = true;
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
         Vector2 cursor_p = {GUI_GAP + i * (wave_s.x + GUI_GAP), TAB_H + 2 * GUI_GAP};
@@ -889,7 +1069,7 @@ void draw_tab_osc() {
         int e = 0;
 
         SetDir(GD_VERTICAL);
-        if (DrawWave(&cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer))) {
+        if (DrawWave(&cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer), 0)) {
             e = pthread_rwlock_wrlock(&params->rw);
             if (e != 0) {
                 // TODO: Log
@@ -939,7 +1119,7 @@ void draw_tab_filter() {
     Vector2 slider_s = {wave_s.x, SLIDER_SIZE_H};
 
     SetDir(GD_VERTICAL);
-    changed_type = DrawWave(&cursor_p, wave_s, g_s.flt.disp_buffer, DISPLAY_BUFFER_SIZE);
+    changed_type = DrawWave(&cursor_p, wave_s, g_s.flt.disp_buffer, DISPLAY_BUFFER_SIZE, 0);
     if (changed_type) {
         changed |= true;
 
@@ -964,11 +1144,18 @@ void draw_tab_filter() {
     //         cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
     // cursor_p.y += FONT_SIZE + GUI_GAP;
 
-    changed |= DrawSlider(&cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, &params->rw);
+    changed |= DrawSlider(&cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, &params->rw);
 
     SetDir(GD_HORIZONTAL);
     changed |= DrawKnob("Resonance", &cursor_p, KNOB_RADIUS, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
     changed |= DrawKnob("Gain", &cursor_p, KNOB_RADIUS, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
+
+    DrawText(TextFormat("a0:%f b0:%f\na1:%f b1:%f\na2:%f b2:%f",
+            params->a[0], params->b[0],
+            params->a[1], params->b[1],
+            params->a[2], params->b[2]),
+            cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
+    cursor_p.y += FONT_SIZE + GUI_GAP;
 
     // Right now this is a bit dumb, IMO there should be a copied struct.
     if (changed) {
@@ -979,8 +1166,15 @@ void draw_tab_filter() {
 void draw_tab_keys() {
     Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
+    static bool show_fft = true;
+    bool clicked = false;
 
-    DrawWave(&cursor_p, wave_s, g_s.buffer_fft_r, ARRAY_SIZE(g_s.buffer_fft_r) / 2);
+    if (show_fft) {
+        clicked = DrawWave(&cursor_p, wave_s, g_s.buffer_fft_r, ARRAY_SIZE(g_s.buffer_fft_r) / 2, 0);
+    } else {
+        clicked = DrawWave(&cursor_p, wave_s, g_s.buffer_fft, ARRAY_SIZE(g_s.buffer_fft), g_s.buffer_fft_idx);
+    }
+
     draw_keys();
 
     cursor_p.x = g_s.screen_w - GUI_GAP - KNOB_SIZE_W;
@@ -990,7 +1184,8 @@ void draw_tab_keys() {
     }
 
     // TODO: move this to debug only.
-    draw_voice_arr();
+    // draw_voice_arr();
+    draw_profiling_stats();
 }
 
 void process_ui() {

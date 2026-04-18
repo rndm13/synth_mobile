@@ -137,7 +137,7 @@ bool DrawKnobI(const char *label, Vector2* cursor, float radius, int *value, int
 
 // Draws a slider and updates the value if the user interacts with it.
 // Returns true if the value was modified this frame.
-bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue, pthread_rwlock_t *rw) {
+bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, float maxValue, GuiScaling scale, pthread_rwlock_t *rw) {
     bool valueChanged = false;
     float newValue = *value;
     Rectangle bounds = {cursor->x, cursor->y, size.x, size.y};
@@ -151,12 +151,16 @@ bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, flo
         // Calculate where the mouse is relative to the width of the slider (0.0 to 1.0)
         float percent = (mousePos.x - bounds.x) / bounds.width;
 
-        // Clamp the percentage to prevent the value from exceeding min/max limits
-        if (percent < 0.0f) percent = 0.0f;
-        if (percent > 1.0f) percent = 1.0f;
+        percent = Clamp(percent, 0.0f, 1.0f);
 
-        // Map the percentage back to the value range
-        newValue = minValue + percent * (maxValue - minValue);
+        switch (scale) {
+            case GS_LINEAR:
+                newValue = minValue + percent * (maxValue - minValue);
+                break;
+            case GS_LOG:
+                newValue = minValue * powf(maxValue / minValue, percent);
+                break;
+        }
     }
 
     // 2. Draw the visual components
@@ -164,10 +168,18 @@ bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, flo
     DrawRectangleRec(bounds, SLIDER_INNER_COLOR);
     DrawRectangleLinesEx(bounds, SLIDER_OUTER_THIKNESS, SLIDER_OUTER_COLOR);
 
-    // Calculate how much of the slider should be "filled"
     float percentFilled = 0.0f;
-    if (maxValue > minValue) { // Prevent division by zero
-        percentFilled = (*value - minValue) / (maxValue - minValue);
+    switch (scale) {
+        case GS_LINEAR:
+            if (maxValue > minValue) {
+                percentFilled = (*value - minValue) / (maxValue - minValue);
+            }
+            break;
+        case GS_LOG:
+            if (maxValue > minValue && *value > 0) {
+                percentFilled = logf(*value / minValue) / logf(maxValue / minValue);
+            }
+            break;
     }
 
     // Draw the filled portion
@@ -177,6 +189,14 @@ bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, flo
     // Draw the handle (thumb)
     Rectangle handleRec = { bounds.x + fillRec.width - 5, bounds.y - 2, 10, bounds.height + 4 };
     DrawRectangleRec(handleRec, SLIDER_THUMB_COLOR);
+
+    const char* text = TextFormat("%.2f", *value);
+    int text_w = MeasureText(text, FONT_SIZE);
+    DrawText(
+            text,
+            bounds.x + (bounds.width - text_w) / 2.0,
+            bounds.y + (bounds.height - FONT_SIZE) / 2.0,
+            FONT_SIZE, TEXT_COLOR);
 
     if (g_dir == GD_HORIZONTAL) {
         cursor->x += size.x + GUI_GAP;
@@ -192,17 +212,18 @@ bool DrawSlider(Vector2 *cursor, Vector2 size, float *value, float minValue, flo
                 // TODO: Log
                 return false;
             }
-        }
 
-        *value = newValue;
+            *value = newValue;
 
-        if (rw != NULL) {
             e = pthread_rwlock_unlock(rw);
             if (e != 0) {
                 // TODO: Log
                 return true;
             }
+        } else {
+            *value = newValue;
         }
+
 
         valueChanged = true;
     }
@@ -253,8 +274,8 @@ bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIn
         // Center the text inside the tab
         int textWidth = MeasureText(labels[i], FONT_SIZE);
         DrawText(labels[i],
-                 tabRec.x + (tabWidth / 2) - (textWidth / 2),
-                 tabRec.y + (tabRec.height / 2) - (FONT_SIZE / 2),
+                 tabRec.x + (tabWidth / 2.0f) - (textWidth / 2.0f),
+                 tabRec.y + (tabRec.height / 2.0f) - (FONT_SIZE / 2.0f),
                  FONT_SIZE,
                  isActive ? TEXT_COLOR : TEXT_INACTIVE_COLOR);
     }
@@ -262,7 +283,7 @@ bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIn
     return indexChanged;
 }
 
-bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size) {
+bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size, size_t off) {
     DrawRectangle(cursor->x, cursor->y, size.x, size.y, WAVE_INNER_COLOR);
     DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, WAVE_OUTER_COLOR);
     Rectangle rec = {cursor->x, cursor->y, size.x, size.y};
@@ -274,12 +295,12 @@ bool DrawWave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size) {
         float min_amp = INFINITY;
         float max_amp = -INFINITY;
         for (int j = si; j <= ei; j++) {
-            max_amp = Clamp(fmax(buffer[j], max_amp), -1, 1);
-            min_amp = Clamp(fmin(buffer[j], min_amp), -1, 1);
+            max_amp = Clamp(fmax(buffer[j % buf_size], max_amp), -1, 1);
+            min_amp = Clamp(fmin(buffer[j % buf_size], min_amp), -1, 1);
         }
 
-        Vector2 s_pos = { cursor->x + i, cursor->y + size.y / 2 - size.y * min_amp / 2.0f };
-        Vector2 e_pos = { cursor->x + i + 1, cursor->y + size.y / 2 - size.y * max_amp / 2.0f };
+        Vector2 s_pos = { cursor->x + i, cursor->y + size.y / 2 - size.y * min_amp / 2.05f };
+        Vector2 e_pos = { cursor->x + i + 1, cursor->y + size.y / 2 - size.y * max_amp / 2.05f };
 
         DrawLineV(s_pos, e_pos, WAVE_LINE_COLOR);
     }
