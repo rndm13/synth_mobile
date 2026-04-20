@@ -3,7 +3,11 @@ workspace
 raylib/*
 
 .cache
-build
-android/build/
+android/build/assets
+android/build/dex
+android/build/lib
+android/build/obj
+android/build/res
+android/build/src/com/raylib/game/R.java
 game.apk
 .venv
