@@ -248,7 +248,7 @@ bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIn
         bool isHovering = CheckCollisionPointRec(mousePos, tabRec);
         bool isActive = (*activeIndex == i);
 
-        // Logic: Update index on click
+        // Update index on click
         if (isHovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             if (*activeIndex != i) {
                 *activeIndex = i;
@@ -256,22 +256,17 @@ bool DrawTabMenu(Rectangle bounds, const char **labels, int count, int *activeIn
             }
         }
 
-        // --- Visuals ---
-        // Draw background: Use a darker color for inactive, lighter for active
         Color bgColor = isActive ? TAB_ACTIVE_COLOR : TAB_INACTIVE_COLOR;
         if (isHovering && !isActive) bgColor = TAB_HOVERING_COLOR;
 
         DrawRectangleRec(tabRec, bgColor);
 
-        // Draw an outline for the tab
         DrawRectangleLinesEx(tabRec, 1.0f, TAB_OUTER_COLOR);
 
-        // Draw an accent line at the top for the active tab
         if (isActive) {
             DrawRectangle(tabRec.x, tabRec.y, tabRec.width, 3, TAB_ACCENT_LINE_COLOR);
         }
 
-        // Center the text inside the tab
         int textWidth = MeasureText(labels[i], FONT_SIZE);
         DrawText(labels[i],
                  tabRec.x + (tabWidth / 2.0f) - (textWidth / 2.0f),

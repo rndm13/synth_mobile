@@ -402,13 +402,13 @@ void prepare_filter_params() {
         return;
     }
 
-    // double V = powf(10, fabs(params->gain) / 20);
-    double K = tan(PI * params->cutoff / (double)FLT_OVERSAMPLED_RATE);
-
     for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
         flt->x[i] = 0;
         flt->y[i] = 0;
     }
+
+    // double V = powf(10, fabs(params->gain) / 20);
+    double K = tan(PI * params->cutoff / (double)FLT_OVERSAMPLED_RATE);
 
     params->a[0] = 1;
     switch (params->type) {
@@ -856,11 +856,11 @@ void update_filter(float* buffer, size_t n) {
 
         flt->x[0] = flt->oversampled_buffer[i];
         flt->y[0] =
-            flt->params.a[0] * flt->x[0] +
-            flt->params.a[1] * flt->x[1] +
-            flt->params.a[2] * flt->x[2] -
-            flt->params.b[1] * flt->y[1] -
-            flt->params.b[2] * flt->y[2] +
+            flt->params.b[0] * flt->x[0] +
+            flt->params.b[1] * flt->x[1] +
+            flt->params.b[2] * flt->x[2] -
+            flt->params.a[1] * flt->y[1] -
+            flt->params.a[2] * flt->y[2] +
             EPSILON; // Anti-denormal offset
 
         flt->oversampled_buffer[i] = flt->y[0];
@@ -1060,7 +1060,6 @@ void draw_tab_synth() {
 
 void draw_tab_osc() {
     Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
-    static bool show_fft = true;
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
         Vector2 cursor_p = {GUI_GAP + i * (wave_s.x + GUI_GAP), TAB_H + 2 * GUI_GAP};
@@ -1175,6 +1174,10 @@ void draw_tab_keys() {
         clicked = DrawWave(&cursor_p, wave_s, g_s.buffer_fft, ARRAY_SIZE(g_s.buffer_fft), g_s.buffer_fft_idx);
     }
 
+    if (clicked) {
+        show_fft ^= true;
+    }
+
     draw_keys();
 
     cursor_p.x = g_s.screen_w - GUI_GAP - KNOB_SIZE_W;
@@ -1185,7 +1188,7 @@ void draw_tab_keys() {
 
     // TODO: move this to debug only.
     // draw_voice_arr();
-    draw_profiling_stats();
+    // draw_profiling_stats();
 }
 
 void process_ui() {
