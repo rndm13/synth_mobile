@@ -31,7 +31,7 @@
 #define OSC_UNISON_MAX 8
 
 #define OSC_DETUNE_MIN 5
-#define OSC_DETUNE_MAX 1200
+#define OSC_DETUNE_MAX 300
 
 #define ENV_A_MIN 0.2f
 #define ENV_A_MAX 5.0f
@@ -1071,11 +1071,11 @@ void draw_keys() {
 
         DrawRectangleRec(r, k_color);
         DrawRectangleLinesEx(r, 5, KEY_OUTER_COLOR);
-        DrawText(
-                TextFormat("%d", i),
-                g_s.key_arr[i].pos.x + 5,
-                g_s.key_arr[i].pos.y + g_s.key_arr[i].size.y / 2,
-                FONT_SIZE, t_color);
+        // DrawText(
+        //         TextFormat("%d", i),
+        //         g_s.key_arr[i].pos.x + 5,
+        //         g_s.key_arr[i].pos.y + g_s.key_arr[i].size.y / 2,
+        //         FONT_SIZE, t_color);
     }
 }
 
@@ -1209,11 +1209,11 @@ void draw_tab_filter() {
     changed |= DrawKnob("Resonance", &cursor_p, KNOB_RADIUS, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
     changed |= DrawKnob("Gain", &cursor_p, KNOB_RADIUS, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
 
-    DrawText(TextFormat("a0:%f b0:%f\na1:%f b1:%f\na2:%f b2:%f",
-            params->a[0], params->b[0],
-            params->a[1], params->b[1],
-            params->a[2], params->b[2]),
-            cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
+    // DrawText(TextFormat("a0:%f b0:%f\na1:%f b1:%f\na2:%f b2:%f",
+    //         params->a[0], params->b[0],
+    //         params->a[1], params->b[1],
+    //         params->a[2], params->b[2]),
+    //         cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
     cursor_p.y += FONT_SIZE + GUI_GAP;
 
     // Right now this is a bit dumb, IMO there should be a copied struct.
