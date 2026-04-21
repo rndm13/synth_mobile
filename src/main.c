@@ -25,6 +25,7 @@
 #define ARRAY_SIZE(X)  (sizeof(X) / sizeof(*(X)))
 
 #define OSC_SEMI_RANGE 12
+#define OSC_CENTS_RANGE 100
 
 #define ENV_A_MIN 0.1f
 #define ENV_A_MAX 5.0f
@@ -47,15 +48,6 @@
 #define FLT_GAIN_MIN         -20.0f
 #define FLT_GAIN_MAX         20.0f
 
-#define KEY_C_OFF    4
-#define OCTAVE_COUNT 8
-#define KEY_OCTAVE   12
-#define KEY_COUNT    (KEY_C_OFF + KEY_OCTAVE * OCTAVE_COUNT)
-
-#define KEY_A4_IDX  49
-#define KEY_A4_FREQ 440.0f
-#define KEY_C4_IDX  (KEY_A4_IDX - 9)
-
 #define ENV_COUNT    2
 #define OSC_COUNT    2
 
@@ -65,6 +57,9 @@
 #define FFT_BUFFER_SIZE BUFFER_SIZE * FFT_BUFFER_SIZE_MUL
 
 #define MAX_VELOCITY 80.0f
+
+#define CENTS_IN_SEMI 100
+#define CENTS_IN_OCTAVE (CENTS_IN_SEMI * KEY_OCTAVE)
 
 #define X_ENUM(v, s) \
     v,
@@ -108,7 +103,10 @@ typedef struct OscParams {
 
     OscType type;
     int semi;
+    int cents;
     float volume;
+
+    double cents_mul; // Calculated from cents
 } OscParams;
 
 typedef struct Osc {
@@ -531,6 +529,8 @@ void init_osc(Osc* osc) {
     osc_voice_arr_init(&osc->voice_arr);
     osc->params.type = OT_SINE;
     osc->params.semi = 0;
+    osc->params.cents = 0;
+    osc->params.cents_mul = 1.0;
     osc->params.volume = 1.0f;
     prepare_osc_display_buffer(osc);
 }
@@ -756,7 +756,7 @@ void update_osc(Osc* osc, Env* env, float* buffer, size_t n) {
             key_idx = KEY_COUNT;
         }
 
-        float wave_freq = g_s.key_arr[key_idx].freq;
+        float wave_freq = g_s.key_arr[key_idx].freq * osc->params.cents_mul;
         float vel_mul = voice.velocity / MAX_VELOCITY;
         float time = GetTime() - osc_voice->start_time;
         float release_time = osc_voice->release_time - osc_voice->start_time;
@@ -1058,6 +1058,10 @@ void draw_tab_synth() {
     DrawKnob("Pan", &cursor_p, KNOB_RADIUS, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
 }
 
+double calc_cents_mul(double cents) {
+    return powf(2, cents / CENTS_IN_OCTAVE);
+}
+
 void draw_tab_osc() {
     Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
 
@@ -1089,6 +1093,23 @@ void draw_tab_osc() {
 
         SetDir(GD_HORIZONTAL);
         DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
+        bool c_cents = DrawKnobI("Cents", &cursor_p, KNOB_RADIUS, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
+        if (c_cents) {
+            e = pthread_rwlock_wrlock(&params->rw);
+            if (e != 0) {
+                // TODO: Log
+                return;
+            }
+
+            params->cents_mul = calc_cents_mul(params->cents);
+
+            e = pthread_rwlock_unlock(&params->rw);
+            if (e != 0) {
+                // TODO: Log
+                return;
+            }
+        }
+
         DrawKnob("Volume", &cursor_p, KNOB_RADIUS, &params->volume, 0.0f, 1.0f, &params->rw);
     }
 }

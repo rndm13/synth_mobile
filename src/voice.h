@@ -8,6 +8,16 @@
 #define KEY_IDX_INVALID -1
 #define VOICE_IDX_INVALID -1
 
+#define KEY_C_OFF    4
+#define OCTAVE_COUNT 8
+#define KEY_OCTAVE   12
+#define KEY_COUNT    (KEY_C_OFF + KEY_OCTAVE * OCTAVE_COUNT)
+
+#define KEY_A4_IDX  49
+#define KEY_C4_IDX  (KEY_A4_IDX - 9)
+
+#define KEY_A4_FREQ 440.0f
+
 // Voices that are currently held on a virtual keyboard
 typedef struct Voice {
     int key_idx;
