@@ -3,7 +3,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 
-#define VOICE_MAX_COUNT 8
+#define VOICE_MAX_COUNT 16
 
 #define KEY_IDX_INVALID -1
 #define VOICE_IDX_INVALID -1
@@ -43,6 +43,7 @@ typedef struct OscVoice {
     // Initial
     Voice voice;
     float start_time;
+    float detune_mul;
 
     // Once during runtime
     float release_time;
@@ -63,6 +64,7 @@ typedef struct OscVoiceArr {
 void osc_voice_arr_init(OscVoiceArr *ov);
 void osc_voice_arr_deinit(OscVoiceArr *v);
 void osc_voice_remove(OscVoiceArr *ov, int ov_idx);
-void osc_voice_add(OscVoiceArr *ov, Voice v, float time);
+void osc_voice_add(OscVoiceArr *ov, Voice v, float detune_mul, float time);
+void osc_voice_add_unison(OscVoiceArr *ov, Voice v, const float *detune_mul, size_t detune_cnt, float time);
 void osc_voice_release(OscVoiceArr *ov, int k_idx, float time);
 void osc_voice_gc(OscVoiceArr *ov);

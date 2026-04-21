@@ -76,13 +76,16 @@ void voice_release_key(VoiceArr *v, int k_idx) {
     pthread_rwlock_unlock(&v->rw);
 }
 
-static void osc_voice_set(OscVoiceArr* ov, int ov_idx, Voice v, float time) {
+static void osc_voice_set(OscVoiceArr* ov, int ov_idx, Voice v, float detune_mul, float time) {
     ov->osc_voice_arr[ov_idx].voice = v;
-    ov->osc_voice_arr[ov_idx].wave_idx = 0;
     ov->osc_voice_arr[ov_idx].start_time = time;
+    ov->osc_voice_arr[ov_idx].detune_mul = detune_mul;
+
     ov->osc_voice_arr[ov_idx].release_time = 0;
-    ov->osc_voice_arr[ov_idx].env = 0;
     ov->osc_voice_arr[ov_idx].released = false;
+
+    ov->osc_voice_arr[ov_idx].env = 0;
+    ov->osc_voice_arr[ov_idx].wave_idx = 0;
 }
 
 static void osc_voice_reset(OscVoiceArr* ov, int ov_idx) {
@@ -114,16 +117,30 @@ unlock:
     pthread_rwlock_unlock(&ov->rw);
 }
 
-void osc_voice_add(OscVoiceArr *ov, Voice v, float time) {
-    pthread_rwlock_wrlock(&ov->rw);
-
+void osc_voice_add_u(OscVoiceArr *ov, Voice v, float detune_mul, float time) {
     if (ov->osc_voice_count >= VOICE_MAX_COUNT) {
         // Shift voices left first and replace with the last index
         osc_voice_remove_u(ov, 0);
     }
 
-    osc_voice_set(ov, ov->osc_voice_count, v, time);
+    osc_voice_set(ov, ov->osc_voice_count, v, detune_mul, time);
     ov->osc_voice_count++;
+}
+
+void osc_voice_add(OscVoiceArr *ov, Voice v, float detune_mul, float time) {
+    pthread_rwlock_wrlock(&ov->rw);
+
+    osc_voice_add_u(ov, v, detune_mul, time);
+
+    pthread_rwlock_unlock(&ov->rw);
+}
+
+void osc_voice_add_unison(OscVoiceArr *ov, Voice v, const float *detune_mul, size_t detune_cnt, float time) {
+    pthread_rwlock_wrlock(&ov->rw);
+
+    for (size_t i = 0; i < detune_cnt; i++) {
+        osc_voice_add_u(ov, v, detune_mul[i], time);
+    }
 
     pthread_rwlock_unlock(&ov->rw);
 }

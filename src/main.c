@@ -27,11 +27,17 @@
 #define OSC_SEMI_RANGE 12
 #define OSC_CENTS_RANGE 100
 
-#define ENV_A_MIN 0.1f
+#define OSC_UNISON_MIN 1
+#define OSC_UNISON_MAX 8
+
+#define OSC_DETUNE_MIN 5
+#define OSC_DETUNE_MAX 1200
+
+#define ENV_A_MIN 0.2f
 #define ENV_A_MAX 5.0f
-#define ENV_D_MIN 0.1f
+#define ENV_D_MIN 0.2f
 #define ENV_D_MAX 5.0f
-#define ENV_R_MIN 0.1f
+#define ENV_R_MIN 0.2f
 #define ENV_R_MAX 5.0f
 
 #define FLT_SAFE_CUTOFF_COEF 0.45
@@ -105,6 +111,9 @@ typedef struct OscParams {
     int semi;
     int cents;
     float volume;
+
+    int unison;
+    int detune;
 
     double cents_mul; // Calculated from cents
 } OscParams;
@@ -225,7 +234,11 @@ typedef struct Synth {
 
 Synth g_s;
 
-float get_env_value(float time, bool released, float release_time, float last_env, Env *env) {
+double calc_cents_mul(double cents) {
+    return powf(2, cents / CENTS_IN_OCTAVE);
+}
+
+float calc_env_value(float time, bool released, float release_time, float last_env, Env *env) {
     float result = 0.0f;
     int e = pthread_rwlock_rdlock(&env->rw);
     if (e != 0) {
@@ -530,8 +543,12 @@ void init_osc(Osc* osc) {
     osc->params.type = OT_SINE;
     osc->params.semi = 0;
     osc->params.cents = 0;
-    osc->params.cents_mul = 1.0;
+    osc->params.unison = OSC_UNISON_MIN;
+    osc->params.detune = OSC_DETUNE_MIN;
     osc->params.volume = 1.0f;
+
+    osc->params.cents_mul = calc_cents_mul(osc->params.cents);
+
     prepare_osc_display_buffer(osc);
 }
 
@@ -649,9 +666,33 @@ bool point_rect_intersection(Vector2 p, Vector2 rp, Vector2 rs) {
     return p.x >= rp.x && p.x <= rp.x + rs.x && p.y >= rp.y && p.y <= rp.y + rs.y;
 }
 
+void osc_add_voice(Osc* osc, Voice new_voice) {
+    float detune_mul_arr[OSC_UNISON_MAX] = {0};
+    int detune_idx = 0;
+
+    int e = pthread_rwlock_rdlock(&osc->params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    for (size_t i = 0; i < osc->params.unison; i++) {
+        double detune_offset = i - (osc->params.unison - 1) / 2.0;
+        detune_mul_arr[detune_idx++] = calc_cents_mul(osc->params.detune * detune_offset);
+    }
+
+    e = pthread_rwlock_unlock(&osc->params.rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    osc_voice_add_unison(&osc->voice_arr, new_voice, detune_mul_arr, detune_idx, GetTime());
+}
+
 void osc_arr_add_voice(Voice new_voice) {
     for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
-        osc_voice_add(&g_s.osc_arr[i].voice_arr, new_voice, GetTime());
+        osc_add_voice(&g_s.osc_arr[i], new_voice);
     }
 }
 
@@ -726,6 +767,30 @@ void process_keys() {
     osc_arr_gc();
 }
 
+void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float wave_freq, float* buffer, size_t n) {
+    Voice voice = osc_voice->voice;
+
+    float vel_mul = voice.velocity / MAX_VELOCITY;
+    float time = GetTime() - osc_voice->start_time;
+    float release_time = osc_voice->release_time - osc_voice->start_time;
+
+    for (int j = 0; j < n; j++) {
+        float wave_length = SAMPLE_RATE / wave_freq;
+        float dt = j / (float)SAMPLE_RATE;
+        float kernel = get_osc_kernel(osc->params.type, osc_voice->wave_idx, wave_length);
+
+        osc_voice->env = calc_env_value(
+                time + dt, osc_voice->released,
+                release_time, osc_voice->env, env);
+
+        buffer[j] += osc->params.volume * osc_voice->env * vel_mul * kernel;
+        osc_voice->wave_idx++;
+        if (osc_voice->wave_idx >= wave_length) {
+            osc_voice->wave_idx = 0;
+        }
+    }
+}
+
 void update_osc(Osc* osc, Env* env, float* buffer, size_t n) {
     OscVoiceArr *ova = &osc->voice_arr;
 
@@ -756,26 +821,8 @@ void update_osc(Osc* osc, Env* env, float* buffer, size_t n) {
             key_idx = KEY_COUNT;
         }
 
-        float wave_freq = g_s.key_arr[key_idx].freq * osc->params.cents_mul;
-        float vel_mul = voice.velocity / MAX_VELOCITY;
-        float time = GetTime() - osc_voice->start_time;
-        float release_time = osc_voice->release_time - osc_voice->start_time;
-
-        for (int j = 0; j < n; j++) {
-            float wave_length = SAMPLE_RATE / wave_freq;
-            float dt = j / (float)SAMPLE_RATE;
-            float kernel = get_osc_kernel(osc->params.type, osc_voice->wave_idx, wave_length);
-
-            osc_voice->env = get_env_value(
-                    time + dt, osc_voice->released,
-                    release_time, osc_voice->env, env);
-
-            buffer[j] += osc->params.volume * osc_voice->env * vel_mul * kernel;
-            osc_voice->wave_idx++;
-            if (osc_voice->wave_idx >= wave_length) {
-                osc_voice->wave_idx = 0;
-            }
-        }
+        float wave_freq = g_s.key_arr[key_idx].freq * osc->params.cents_mul * osc_voice->detune_mul;
+        update_osc_voice(osc, env, osc_voice, wave_freq, buffer, n);
     }
 
     e = pthread_rwlock_unlock(&ova->rw);
@@ -987,35 +1034,24 @@ void draw_profiling_stats() {
 }
 
 void draw_voice_arr() {
-    // pthread_rwlock_rdlock(&g_s.voice_arr.rw);
+    Osc* osc = &g_s.osc_arr[0];
+    pthread_rwlock_rdlock(&osc->voice_arr.rw);
 
-    // for (int i = 0; i < g_s.voice_arr.voice_count; i++) {
-    //     int key_idx = g_s.voice_arr.voice_arr[i].key_idx;
-    //     float wave_freq = g_s.key_arr[key_idx].freq;
-    //     DrawText(
-    //             TextFormat("sine frequency: %.2f, key idx: %d", wave_freq, key_idx),
-    //             GUI_GAP, GUI_GAP + FONT_SIZE * i,
-    //             FONT_SIZE, RED);
-    // }
+    for (int i = 0; i < osc->voice_arr.osc_voice_count; i++) {
+        int k_idx = osc->voice_arr.osc_voice_arr[i].voice.key_idx;
+        float detune = osc->voice_arr.osc_voice_arr[i].detune_mul;
+        float start_time = osc->voice_arr.osc_voice_arr[i].start_time;
+        float release_time = osc->voice_arr.osc_voice_arr[i].release_time;
+        float env = osc->voice_arr.osc_voice_arr[i].env;
+        DrawText(
+                TextFormat(
+                    "key: %d, d: %.2f, t: %.2f, r: %.2f, env: %.2f",
+                    k_idx, detune, GetTime() - start_time, release_time - start_time, env),
+                GUI_GAP, GUI_GAP + FONT_SIZE * i,
+                FONT_SIZE, RED);
+    }
 
-    // pthread_rwlock_unlock(&g_s.voice_arr.rw);
-
-    // pthread_rwlock_rdlock(&g_s.osc.voice_arr.rw);
-
-    // for (int i = 0; i < g_s.osc.voice_arr.osc_voice_count; i++) {
-    //     int k_idx = g_s.osc.voice_arr.osc_voice_arr[i].voice.key_idx;
-    //     float start_time = g_s.osc.voice_arr.osc_voice_arr[i].start_time;
-    //     float release_time = g_s.osc.voice_arr.osc_voice_arr[i].release_time;
-    //     float env = g_s.osc.voice_arr.osc_voice_arr[i].env;
-    //     DrawText(
-    //             TextFormat(
-    //                 "key: %d, t: %.2f, r: %.2f, env: %.2f",
-    //                 k_idx, GetTime() - start_time, release_time - start_time, env),
-    //             g_s.screen_w / 2 + GUI_GAP, GUI_GAP + FONT_SIZE * i,
-    //             FONT_SIZE, RED);
-    // }
-
-    // pthread_rwlock_unlock(&g_s.osc.voice_arr.rw);
+    pthread_rwlock_unlock(&osc->voice_arr.rw);
 }
 
 void draw_keys() {
@@ -1058,12 +1094,8 @@ void draw_tab_synth() {
     DrawKnob("Pan", &cursor_p, KNOB_RADIUS, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
 }
 
-double calc_cents_mul(double cents) {
-    return powf(2, cents / CENTS_IN_OCTAVE);
-}
-
 void draw_tab_osc() {
-    Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
+    Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H - 50};
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
         Vector2 cursor_p = {GUI_GAP + i * (wave_s.x + GUI_GAP), TAB_H + 2 * GUI_GAP};
@@ -1091,6 +1123,9 @@ void draw_tab_osc() {
             prepare_osc_display_buffer(osc);
         }
 
+        Vector2 cursor_p_r2 = cursor_p;
+        cursor_p_r2.y += KNOB_SIZE_H + GUI_GAP;
+
         SetDir(GD_HORIZONTAL);
         DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
         bool c_cents = DrawKnobI("Cents", &cursor_p, KNOB_RADIUS, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
@@ -1109,6 +1144,10 @@ void draw_tab_osc() {
                 return;
             }
         }
+
+        cursor_p = cursor_p_r2;
+        DrawKnobI("Unison", &cursor_p, KNOB_RADIUS, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, &params->rw);
+        DrawKnobI("Detune", &cursor_p, KNOB_RADIUS, &params->detune, OSC_DETUNE_MIN, OSC_DETUNE_MAX, &params->rw);
 
         DrawKnob("Volume", &cursor_p, KNOB_RADIUS, &params->volume, 0.0f, 1.0f, &params->rw);
     }
