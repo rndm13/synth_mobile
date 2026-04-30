@@ -1,7 +1,6 @@
 #include "fft.h"
 #include "math.h"
-
-#define PI 3.14159265358979323846f
+#include "settings.h"
 
 void fft(float data_re[], float data_im[], const unsigned int N) {
     rearrange(data_re, data_im, N);

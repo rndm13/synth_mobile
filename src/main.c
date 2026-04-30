@@ -8,75 +8,12 @@
 #include <string.h>
 #include <time.h>
 
+#include "utils.h"
+#include "settings.h"
 #include "gui_elements.h"
 #include "voice.h"
 #include "fft.h"
-
-#define SAMPLE_RATE    48000
-
-#define MS_IN_S        1000
-#define NS_IN_MS       (1000 * 1000)
-#define NS_IN_S        (1000 * 1000 * 1000)
-
-#define S_TO_MS(X)     ((X) * MS_IN_S)
-#define NS_TO_MS(X)    ((X) / NS_IN_MS)
-#define S_TO_NS(X)     ((X) * NS_IN_S)
-
-#define ARRAY_SIZE(X)  (sizeof(X) / sizeof(*(X)))
-
-#define OSC_SEMI_RANGE 12
-#define OSC_CENTS_RANGE 100
-
-#define OSC_UNISON_MIN 1
-#define OSC_UNISON_MAX 8
-
-#define OSC_DETUNE_MIN 5
-#define OSC_DETUNE_MAX 300
-
-#define ENV_A_MIN 0.2f
-#define ENV_A_MAX 5.0f
-#define ENV_D_MIN 0.2f
-#define ENV_D_MAX 5.0f
-#define ENV_R_MIN 0.2f
-#define ENV_R_MAX 5.0f
-
-#define FLT_SAFE_CUTOFF_COEF 0.45
-#define FLT_FIR_TAPS         21
-#define FLT_FIR_CUTOFF       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
-
-#define FLT_OVERSAMPLING     4
-#define FLT_OVERSAMPLED_RATE (SAMPLE_RATE * FLT_OVERSAMPLING)
-
-#define FLT_CUTOFF_MIN       100.0f
-#define FLT_CUTOFF_MAX       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
-#define FLT_RESONANCE_MIN    0.5f
-#define FLT_RESONANCE_MAX    20.0f
-#define FLT_GAIN_MIN         -20.0f
-#define FLT_GAIN_MAX         20.0f
-
-#define ENV_COUNT    2
-#define OSC_COUNT    2
-
-#define DISPLAY_BUFFER_SIZE 256
-#define BUFFER_SIZE 4096
-#define FFT_BUFFER_SIZE_MUL 2
-#define FFT_BUFFER_SIZE BUFFER_SIZE * FFT_BUFFER_SIZE_MUL
-
-#define MAX_VELOCITY 80.0f
-
-#define CENTS_IN_SEMI 100
-#define CENTS_IN_OCTAVE (CENTS_IN_SEMI * KEY_OCTAVE)
-
-#define X_ENUM(v, s) \
-    v,
-
-#define X_STR_ARR(v, s) \
-    s,
-
-#define X_STR_CASE(v, s) \
-    case v: return s;
-
-typedef struct timespec timespec_t;
+#include "filter.h"
 
 typedef struct Key {
     Vector2 pos;
@@ -126,62 +63,6 @@ typedef struct Osc {
     // Output
     float disp_buffer[DISPLAY_BUFFER_SIZE];
 } Osc;
-
-#define FLT_TYPE_X(X)             \
-    X(FT_LPF, "Low-pass filter")  \
-    X(FT_HPF, "High-pass filter") \
-    X(FT_BPF, "Band-pass filter") \
-    X(FT_DISABLED, "Disabled")    \
-
-typedef enum FilterType {
-    FLT_TYPE_X(X_ENUM)
-    FT_MAX,
-} FilterType;
-
-const char* ft2str(FilterType ft) {
-    switch (ft) {
-        FLT_TYPE_X(X_STR_CASE)
-        default:
-            break;
-    }
-    return "Unknown";
-}
-
-typedef struct FilterParams {
-    pthread_rwlock_t rw;
-
-    FilterType type;
-    float cutoff;
-    float resonance;
-    float gain;
-
-    // Parameters calculated when any of the arguments are changed
-    double norm;
-    double a[3]; // Poles
-    double b[3]; // Zeros
-} FilterParams;
-
-typedef struct FIRFilter {
-    float coeffs[FLT_FIR_TAPS];
-    float windows[FLT_FIR_TAPS];
-    // TODO: Make this a circular buffer
-    float history[FLT_FIR_TAPS];
-} FIRFilter;
-
-typedef struct Filter {
-    // RW protected
-    FilterParams params;
-
-    // Filter state
-    double x[3];
-    double y[3];
-    FIRFilter fir_up;
-    FIRFilter fir_down;
-
-    // Filter output
-    float disp_buffer[DISPLAY_BUFFER_SIZE];
-    float oversampled_buffer[BUFFER_SIZE * FLT_OVERSAMPLING];
-} Filter;
 
 #define TAB_X(X)                \
     X(TAB_SYNTH, "Synth")       \
@@ -403,124 +284,6 @@ void prepare_osc_display_buffer(Osc* osc) {
     }
 }
 
-void prepare_filter_params() {
-    Filter* flt = &g_s.flt;
-    FilterParams* params = &flt->params;
-
-    int e = pthread_rwlock_wrlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
-        flt->x[i] = 0;
-        flt->y[i] = 0;
-    }
-
-    // double V = powf(10, fabs(params->gain) / 20);
-    double K = tan(PI * params->cutoff / (double)FLT_OVERSAMPLED_RATE);
-
-    params->a[0] = 1;
-    switch (params->type) {
-        case FT_LPF:
-            params->norm = 1 / (1 + K / params->resonance + K * K);
-            params->b[0] = K * K * params->norm;
-            params->b[1] = 2 * params->b[0];
-            params->b[2] = params->b[0];
-            params->a[1] = 2 * (K * K - 1) * params->norm;
-            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
-            break;
-
-        case FT_HPF:
-            params->norm = 1 / (1 + K / params->resonance + K * K);
-            params->b[0] = 1 * params->norm;
-            params->b[1] = -2 * params->b[0];
-            params->b[2] = params->b[0];
-            params->a[1] = 2 * (K * K - 1) * params->norm;
-            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
-            break;
-
-        case FT_BPF:
-            params->norm = 1 / (1 + K / params->resonance + K * K);
-            params->b[0] = K / params->resonance * params->norm;
-            params->b[1] = 0;
-            params->b[2] = -params->b[0];
-            params->a[1] = 2 * (K * K - 1) * params->norm;
-            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
-            break;
-
-        case FT_DISABLED:
-            params->norm = 0;
-            params->b[0] = 0;
-            params->b[1] = 0;
-            params->b[2] = 0;
-            params->a[1] = 0;
-            params->a[2] = 0;
-            break;
-
-        default:
-            break;
-    }
-
-    e = pthread_rwlock_unlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-}
-
-void prepare_filter_display() {
-    Filter* flt = &g_s.flt;
-    FilterParams* params = &flt->params;
-
-    int e = pthread_rwlock_rdlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    for (size_t i = 0; i < DISPLAY_BUFFER_SIZE; i++) {
-        if (params->type == FT_DISABLED) {
-            flt->disp_buffer[i] = 0.0f;
-            continue;
-        }
-
-        double freq = FLT_CUTOFF_MIN * powf(FLT_CUTOFF_MAX / FLT_CUTOFF_MIN, (double)(i) / (DISPLAY_BUFFER_SIZE - 1));
-
-        // Current frequency in radians (0 to PI)
-        double w = 2.0 * PI * freq / FLT_OVERSAMPLED_RATE;
-
-        double complex z1 = cexp(-I * w);
-        double complex z2 = cexp(-I * 2.0 * w);
-
-        // H(z) = (b0 + b1*z^-1 + b2*z^-2) / (a0 + a1*z^-1 + a2*z^-2)
-        double complex num = params->a[0] + params->a[1] * z1 + params->a[2] * z2;
-        double complex den = params->b[0] + params->b[1] * z1 + params->b[2] * z2;
-
-        double nMag = cabs(num);
-        double dMag = cabs(den);
-
-        if (dMag < EPSILON) {
-            flt->disp_buffer[i] = -1.0f;
-        } else {
-            double magnitude = nMag / dMag;
-
-            flt->disp_buffer[i] = Clamp(-log10f(magnitude), -1, 1);
-        }
-    }
-
-    e = pthread_rwlock_unlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-}
-
-void prepare_filter() {
-    prepare_filter_params();
-    prepare_filter_display();
-}
 
 void init_env(Env* env) {
     int e = pthread_rwlock_init(&env->rw, NULL);
@@ -591,7 +354,7 @@ void init_filter(Filter *flt) {
     init_fir_filter(&flt->fir_up, FLT_OVERSAMPLED_RATE);
     init_fir_filter(&flt->fir_down, FLT_OVERSAMPLED_RATE);
 
-    prepare_filter();
+    prepare_filter(flt);
 }
 
 void init_synth() {
@@ -840,89 +603,6 @@ params_unlock:
 
 }
 
-float update_fir_filter(FIRFilter *fir, float input) {
-    for (int i = FLT_FIR_TAPS - 1; i > 0; i--) {
-        fir->history[i] = fir->history[i - 1];
-    }
-    fir->history[0] = input;
-
-    float output = 0;
-    for (int i = 0; i < FLT_FIR_TAPS; i++) {
-        output += fir->history[i] * fir->coeffs[i];
-    }
-
-    return output;
-}
-
-void upsample_filter_u(Filter* flt, float* buffer, size_t n) {
-    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
-        flt->oversampled_buffer[i] = 0.0f;
-    }
-
-    for (size_t i = 0; i < n; i++) {
-        flt->oversampled_buffer[i * FLT_OVERSAMPLING] += buffer[i] * FLT_OVERSAMPLING;
-    }
-
-    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
-        flt->oversampled_buffer[i] = update_fir_filter(&flt->fir_up, flt->oversampled_buffer[i]);
-    }
-}
-
-void downsample_filter_u(Filter* flt, float* buffer, size_t n) {
-    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
-        flt->oversampled_buffer[i] = update_fir_filter(&flt->fir_down, flt->oversampled_buffer[i]);
-    }
-
-    for (size_t i = 0; i < n; i++) {
-        buffer[i] = flt->oversampled_buffer[i * FLT_OVERSAMPLING];
-    }
-}
-
-void update_filter(float* buffer, size_t n) {
-    Filter* flt = &g_s.flt;
-
-    int e = pthread_rwlock_rdlock(&flt->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    if (flt->params.type == FT_DISABLED) {
-        goto unlock;
-    }
-
-    upsample_filter_u(flt, buffer, n);
-
-    // Converts the buffer data before using it
-    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
-        // Move old state
-        flt->y[2] = flt->y[1];
-        flt->y[1] = flt->y[0];
-        flt->x[2] = flt->x[1];
-        flt->x[1] = flt->x[0];
-
-        flt->x[0] = flt->oversampled_buffer[i];
-        flt->y[0] =
-            flt->params.b[0] * flt->x[0] +
-            flt->params.b[1] * flt->x[1] +
-            flt->params.b[2] * flt->x[2] -
-            flt->params.a[1] * flt->y[1] -
-            flt->params.a[2] * flt->y[2] +
-            EPSILON; // Anti-denormal offset
-
-        flt->oversampled_buffer[i] = flt->y[0];
-    }
-
-    downsample_filter_u(flt, buffer, n);
-
-unlock:
-    e = pthread_rwlock_unlock(&flt->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-}
-
 void update_stream(float* buffer, size_t n) {
     int e = pthread_rwlock_rdlock(&g_s.params.rw);
     if (e != 0) {
@@ -1005,7 +685,7 @@ void update_synth(float* buffer, size_t n) {
     g_s.prof.osc_time[1] = duration_from(section_time);
 
     timespec_get(&section_time, TIME_UTC);
-    update_filter(buffer, n);
+    update_filter(&g_s.flt, buffer, n);
     g_s.prof.flt_time = duration_from(section_time);
 
     timespec_get(&section_time, TIME_UTC);
@@ -1218,7 +898,7 @@ void draw_tab_filter() {
 
     // Right now this is a bit dumb, IMO there should be a copied struct.
     if (changed) {
-        prepare_filter();
+        prepare_filter(&g_s.flt);
     }
 }
 
@@ -1301,8 +981,7 @@ int main(void) {
 
     init_synth();
 
-    while (!WindowShouldClose())
-    {
+    while (!WindowShouldClose()) {
         // Process
         process_ui();
 
