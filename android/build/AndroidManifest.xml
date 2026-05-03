@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-        package="com.raylib.game"
+        package="com.raylib.synth"
         android:versionCode="1" android:versionName="1.0" >
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="34"/>
     <uses-feature android:glEsVersion="0x00020000" android:required="true"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-    <application android:allowBackup="false" android:label="Game" android:icon="@drawable/icon">
-        <activity android:name="com.raylib.game.NativeLoader"
+    <application android:allowBackup="false" android:label="Synth" android:icon="@drawable/icon">
+        <activity android:name="com.raylib.synth.NativeLoader"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             android:configChanges="orientation|keyboardHidden|screenSize"
             android:exported="true"

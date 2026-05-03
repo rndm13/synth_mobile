@@ -107,31 +107,31 @@ $BUILD_TOOLS/aapt package -f -m \
 javac -verbose -source 1.8 -target 1.8 -d android/build/obj \
 	-bootclasspath jre/lib/rt.jar \
 	-classpath android/sdk/platforms/android-34/android.jar:android/build/obj \
-	-sourcepath src android/build/src/com/raylib/game/R.java \
-	android/build/src/com/raylib/game/NativeLoader.java
+	-sourcepath src android/build/src/com/raylib/synth/R.java \
+	android/build/src/com/raylib/synth/NativeLoader.java
 
 $BUILD_TOOLS/dx --verbose --dex --output=android/build/dex/classes.dex android/build/obj
 
 # Add resources and assets to APK
 $BUILD_TOOLS/aapt package -f \
 	-M android/build/AndroidManifest.xml -S android/build/res -A assets \
-	-I android/sdk/platforms/android-34/android.jar -F game.apk android/build/dex
+	-I android/sdk/platforms/android-34/android.jar -F synth.apk android/build/dex
 
 # Add libraries to APK
 cd android/build
 for ABI in $ABIS; do
-	../../$BUILD_TOOLS/aapt add ../../game.apk lib/$ABI/libmain.so
+	../../$BUILD_TOOLS/aapt add ../../synth.apk lib/$ABI/libmain.so
 done
 cd ../..
 
 # Zipalign APK and sign
 # NOTE: If you changed the storepass and keypass in the setup process, change them here too
-$BUILD_TOOLS/zipalign -f 4 game.apk game.final.apk
-mv -f game.final.apk game.apk
+$BUILD_TOOLS/zipalign -f 4 synth.apk synth.final.apk
+mv -f synth.final.apk synth.apk
 
 # Install apksigner with `sudo apt install apksigner`
-apksigner sign  --ks android/raylib.keystore --out my-app-release.apk --ks-pass pass:raylib game.apk
-mv my-app-release.apk game.apk
+apksigner sign  --ks android/raylib.keystore --out my-app-release.apk --ks-pass pass:raylib synth.apk
+mv my-app-release.apk synth.apk
 
 # Install to device or emulator
-android/sdk/platform-tools/adb install -r game.apk
+android/sdk/platform-tools/adb install -r synth.apk

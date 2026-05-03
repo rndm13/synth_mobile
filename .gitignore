@@ -8,6 +8,6 @@ android/build/dex
 android/build/lib
 android/build/obj
 android/build/res
-android/build/src/com/raylib/game/R.java
-game.apk
+android/build/src/com/raylib/synth/R.java
+synth.apk
 .venv
