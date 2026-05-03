@@ -103,15 +103,19 @@ typedef struct Synth {
     float buffer_fft_w[FFT_BUFFER_SIZE];
     AudioStream stream;
 
+    bool show_fft;
+
+    bool show_debug;
+    bool show_prof;
+    SynthProfiling prof;
+
     // Parameters
+    char program_name[PROGRAM_NAME_CAPACITY];
     SynthParams params;
     Osc osc_arr[OSC_COUNT];
     Env env_arr[ENV_COUNT];
     Filter flt;
     VoiceArr voice_arr;
-
-    bool show_fft;
-    SynthProfiling prof;
 } Synth;
 
 Synth g_s;
@@ -366,17 +370,19 @@ void init_synth() {
     g_s.cur_tab = TAB_KEYS;
     g_s.cur_octave = 4;
 
-    e = pthread_rwlock_init(&g_s.params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
-    voice_arr_init(&g_s.voice_arr);
-    g_s.params.amp = 0.2;
-    g_s.params.pan = 0.5f;
     g_s.buffer_fft_idx = 0;
     for (size_t i = 0; i < ARRAY_SIZE(g_s.buffer_fft_w); i++) {
         g_s.buffer_fft_w[i] = 0.5f * (1 - cos(2 * PI * i / (float)(FFT_BUFFER_SIZE - 1)));
     }
+
+    e = pthread_rwlock_init(&g_s.params.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+    strncpy(g_s.program_name, PROGRAM_NAME_INIT, PROGRAM_NAME_CAPACITY);
+    g_s.params.amp = 0.2;
+    g_s.params.pan = 0.5f;
+    voice_arr_init(&g_s.voice_arr);
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
         init_env(&g_s.env_arr[i]);
@@ -744,19 +750,22 @@ void draw_keys() {
         r.height = g_s.key_arr[i].size.y;
 
         Color k_color = KEY_WHITE_COLOR;
-        // Color t_color = BLACK;
+        Color t_color = BLACK;
         if (key_is_black(i)) {
             k_color = KEY_BLACK_COLOR;
-            // t_color = WHITE;
+            t_color = WHITE;
         }
 
         DrawRectangleRec(r, k_color);
         DrawRectangleLinesEx(r, 5, KEY_OUTER_COLOR);
-        // DrawText(
-        //         TextFormat("%d", i),
-        //         g_s.key_arr[i].pos.x + 5,
-        //         g_s.key_arr[i].pos.y + g_s.key_arr[i].size.y / 2,
-        //         FONT_SIZE, t_color);
+
+        if (g_s.show_debug) {
+            DrawText(
+                    TextFormat("%d", i),
+                    g_s.key_arr[i].pos.x + 5,
+                    g_s.key_arr[i].pos.y + g_s.key_arr[i].size.y / 2,
+                    FONT_SIZE, t_color);
+        }
     }
 }
 
@@ -768,9 +777,21 @@ void draw_fps() {
 }
 
 void draw_tab_synth(Vector2* cursor_p) {
+    Vector2 tfield_s = { TEXT_FIELD_SIZE_W, TEXT_FIELD_SIZE_H };
+
+    set_gui_dir(GD_VERTICAL);
+    draw_text_field(cursor_p, tfield_s, g_s.program_name, PROGRAM_NAME_CAPACITY);
+
+    Vector2 cursor_p_r2 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
-    draw_knob("Amp", cursor_p, &g_s.params.amp, 0.0f, 1.0f, &g_s.params.rw);
-    draw_knob("Pan", cursor_p, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
+    draw_knob("Amp", &cursor_p_r2, &g_s.params.amp, 0.0f, 1.0f, &g_s.params.rw);
+    draw_knob("Pan", &cursor_p_r2, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
+
+    cursor_p->y += KNOB_SIZE_H;
+    Vector2 cursor_p_r3 = *cursor_p;
+    set_gui_dir(GD_HORIZONTAL);
+    draw_toggle("Debug", &cursor_p_r3, &g_s.show_debug, NULL);
+    draw_toggle("Profiling", &cursor_p_r3, &g_s.show_prof, NULL);
 }
 
 void draw_tab_osc(Vector2* cursor_p) {
@@ -877,23 +898,20 @@ void draw_tab_filter(Vector2* cursor_p) {
         }
     }
 
-    // DrawText(
-    //         TextFormat("Click to change type. Current type: %s", ft2str(params->type)),
-    //         cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
-    // cursor_p.y += FONT_SIZE + GUI_GAP;
-
     changed |= draw_slider(cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, &params->rw);
 
     set_gui_dir(GD_HORIZONTAL);
     changed |= draw_knob("Resonance", cursor_p, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
     changed |= draw_knob("Gain", cursor_p, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
 
-    // DrawText(TextFormat("a0:%f b0:%f\na1:%f b1:%f\na2:%f b2:%f",
-    //         params->a[0], params->b[0],
-    //         params->a[1], params->b[1],
-    //         params->a[2], params->b[2]),
-    //         cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
-    // cursor_p.y += FONT_SIZE + GUI_GAP;
+    if (g_s.show_debug) {
+        DrawText(TextFormat("a0:%f b0:%f\na1:%f b1:%f\na2:%f b2:%f",
+                params->a[0], params->b[0],
+                params->a[1], params->b[1],
+                params->a[2], params->b[2]),
+                cursor_p->x, cursor_p->y, FONT_SIZE, TEXT_COLOR);
+        cursor_p->y += FONT_SIZE + GUI_GAP;
+    }
 
     // Right now this is a bit dumb, IMO there should be a copied struct.
     if (changed) {
@@ -923,9 +941,13 @@ void draw_tab_keys(Vector2* cursor_p) {
         prepare_keys();
     }
 
-    // TODO: move this to debug only.
-    // draw_voice_arr();
-    // draw_profiling_stats();
+    if (g_s.show_debug) {
+        draw_voice_arr();
+    }
+
+    if (g_s.show_prof) {
+        draw_profiling_stats();
+    }
 }
 
 void process_ui() {
@@ -954,6 +976,7 @@ void draw_ui() {
     };
 
     reset_gui_ctx();
+
     set_gui_dir(GD_VERTICAL);
     draw_tab_menu(&cursor_p, tab_s, tab_l, ARRAY_SIZE(tab_l), (int*)&g_s.cur_tab);
     switch (g_s.cur_tab) {
@@ -973,6 +996,8 @@ void draw_ui() {
         draw_tab_keys(&cursor_p);
         break;
     }
+
+    finish_gui_ctx();
 }
 
 int main(void) {

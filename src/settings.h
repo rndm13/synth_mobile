@@ -38,4 +38,7 @@
 #define CENTS_IN_SEMI 100
 #define CENTS_IN_OCTAVE (CENTS_IN_SEMI * KEY_OCTAVE)
 
+#define PROGRAM_NAME_CAPACITY 16
+#define PROGRAM_NAME_INIT "INIT SYNTH"
+
 typedef struct timespec timespec_t;
