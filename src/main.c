@@ -110,6 +110,7 @@ typedef struct Synth {
     Filter flt;
     VoiceArr voice_arr;
 
+    bool show_fft;
     SynthProfiling prof;
 } Synth;
 
@@ -743,10 +744,10 @@ void draw_keys() {
         r.height = g_s.key_arr[i].size.y;
 
         Color k_color = KEY_WHITE_COLOR;
-        Color t_color = BLACK;
+        // Color t_color = BLACK;
         if (key_is_black(i)) {
             k_color = KEY_BLACK_COLOR;
-            t_color = WHITE;
+            // t_color = WHITE;
         }
 
         DrawRectangleRec(r, k_color);
@@ -766,25 +767,23 @@ void draw_fps() {
             FONT_SIZE, GREEN);
 }
 
-void draw_tab_synth() {
-    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
-
-    SetDir(GD_HORIZONTAL);
-    DrawKnob("Amp", &cursor_p, KNOB_RADIUS, &g_s.params.amp, 0.0f, 1.0f, &g_s.params.rw);
-    DrawKnob("Pan", &cursor_p, KNOB_RADIUS, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
+void draw_tab_synth(Vector2* cursor_p) {
+    set_gui_dir(GD_HORIZONTAL);
+    draw_knob("Amp", cursor_p, &g_s.params.amp, 0.0f, 1.0f, &g_s.params.rw);
+    draw_knob("Pan", cursor_p, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
 }
 
-void draw_tab_osc() {
+void draw_tab_osc(Vector2* cursor_p) {
     Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H - 50};
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
-        Vector2 cursor_p = {GUI_GAP + i * (wave_s.x + GUI_GAP), TAB_H + 2 * GUI_GAP};
+        Vector2 split_cursor_p = {cursor_p->x + i * (wave_s.x + GUI_GAP), cursor_p->y};
         Osc *osc = &g_s.osc_arr[i];
         OscParams *params = &osc->params;
         int e = 0;
 
-        SetDir(GD_VERTICAL);
-        if (DrawWave(&cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer), 0)) {
+        set_gui_dir(GD_VERTICAL);
+        if (draw_wave(&split_cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer), 0)) {
             e = pthread_rwlock_wrlock(&params->rw);
             if (e != 0) {
                 // TODO: Log
@@ -803,12 +802,13 @@ void draw_tab_osc() {
             prepare_osc_display_buffer(osc);
         }
 
-        Vector2 cursor_p_r2 = cursor_p;
+        // 2nd Row
+        Vector2 cursor_p_r2 = split_cursor_p;
         cursor_p_r2.y += KNOB_SIZE_H + GUI_GAP;
 
-        SetDir(GD_HORIZONTAL);
-        DrawKnobI("Semitones", &cursor_p, KNOB_RADIUS, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
-        bool c_cents = DrawKnobI("Cents", &cursor_p, KNOB_RADIUS, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
+        set_gui_dir(GD_HORIZONTAL);
+        draw_knob_i("Semitones", &split_cursor_p, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
+        bool c_cents = draw_knob_i("Cents", &split_cursor_p, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
         if (c_cents) {
             e = pthread_rwlock_wrlock(&params->rw);
             if (e != 0) {
@@ -825,40 +825,39 @@ void draw_tab_osc() {
             }
         }
 
-        cursor_p = cursor_p_r2;
-        DrawKnobI("Unison", &cursor_p, KNOB_RADIUS, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, &params->rw);
-        DrawKnobI("Detune", &cursor_p, KNOB_RADIUS, &params->detune, OSC_DETUNE_MIN, OSC_DETUNE_MAX, &params->rw);
+        split_cursor_p = cursor_p_r2;
+        draw_knob_i("Unison", &split_cursor_p, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, &params->rw);
+        draw_knob_i("Detune", &split_cursor_p, &params->detune, OSC_DETUNE_MIN, OSC_DETUNE_MAX, &params->rw);
 
-        DrawKnob("Volume", &cursor_p, KNOB_RADIUS, &params->volume, 0.0f, 1.0f, &params->rw);
+        draw_knob("Volume", &split_cursor_p, &params->volume, 0.0f, 1.0f, &params->rw);
     }
 }
 
-void draw_tab_env() {
+void draw_tab_env(Vector2* cursor_p) {
     Vector2 wave_s = {(g_s.screen_w - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
 
     for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
         Env *env = &g_s.env_arr[i];
-        Vector2 cursor_p = {GUI_GAP + i * (wave_s.x + GUI_GAP), TAB_H + 2 * GUI_GAP};
+        Vector2 split_cursor_p = {cursor_p->x + i * (wave_s.x + GUI_GAP), cursor_p->y};
 
-        SetDir(GD_HORIZONTAL);
+        set_gui_dir(GD_HORIZONTAL);
         // TODO: Env wave
-        DrawKnob("Attack", &cursor_p, KNOB_RADIUS, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
-        DrawKnob("Decay", &cursor_p, KNOB_RADIUS, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
-        DrawKnob("Sustain", &cursor_p, KNOB_RADIUS, &env->sustain, 0.0f, 1.0f, &env->rw);
-        DrawKnob("Release", &cursor_p, KNOB_RADIUS, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
+        draw_knob("Attack", &split_cursor_p, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
+        draw_knob("Decay", &split_cursor_p, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
+        draw_knob("Sustain", &split_cursor_p, &env->sustain, 0.0f, 1.0f, &env->rw);
+        draw_knob("Release", &split_cursor_p, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
     }
 }
 
-void draw_tab_filter() {
+void draw_tab_filter(Vector2* cursor_p) {
     bool changed_type = false;
     bool changed = false;
     FilterParams *params = &g_s.flt.params;
-    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
     Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
     Vector2 slider_s = {wave_s.x, SLIDER_SIZE_H};
 
-    SetDir(GD_VERTICAL);
-    changed_type = DrawWave(&cursor_p, wave_s, g_s.flt.disp_buffer, DISPLAY_BUFFER_SIZE, 0);
+    set_gui_dir(GD_VERTICAL);
+    changed_type = draw_wave(cursor_p, wave_s, g_s.flt.disp_buffer, DISPLAY_BUFFER_SIZE, 0);
     if (changed_type) {
         changed |= true;
 
@@ -883,18 +882,18 @@ void draw_tab_filter() {
     //         cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
     // cursor_p.y += FONT_SIZE + GUI_GAP;
 
-    changed |= DrawSlider(&cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, &params->rw);
+    changed |= draw_slider(cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, &params->rw);
 
-    SetDir(GD_HORIZONTAL);
-    changed |= DrawKnob("Resonance", &cursor_p, KNOB_RADIUS, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
-    changed |= DrawKnob("Gain", &cursor_p, KNOB_RADIUS, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
+    set_gui_dir(GD_HORIZONTAL);
+    changed |= draw_knob("Resonance", cursor_p, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
+    changed |= draw_knob("Gain", cursor_p, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
 
     // DrawText(TextFormat("a0:%f b0:%f\na1:%f b1:%f\na2:%f b2:%f",
     //         params->a[0], params->b[0],
     //         params->a[1], params->b[1],
     //         params->a[2], params->b[2]),
     //         cursor_p.x, cursor_p.y, FONT_SIZE, TEXT_COLOR);
-    cursor_p.y += FONT_SIZE + GUI_GAP;
+    // cursor_p.y += FONT_SIZE + GUI_GAP;
 
     // Right now this is a bit dumb, IMO there should be a copied struct.
     if (changed) {
@@ -902,27 +901,25 @@ void draw_tab_filter() {
     }
 }
 
-void draw_tab_keys() {
-    Vector2 cursor_p = {GUI_GAP, TAB_H + 2 * GUI_GAP};
+void draw_tab_keys(Vector2* cursor_p) {
     Vector2 wave_s = {g_s.screen_w - GUI_GAP, WAVE_SIZE_H};
-    static bool show_fft = true;
     bool clicked = false;
 
-    if (show_fft) {
-        clicked = DrawWave(&cursor_p, wave_s, g_s.buffer_fft_r, ARRAY_SIZE(g_s.buffer_fft_r) / 2, 0);
+    set_gui_dir(GD_VERTICAL);
+    if (g_s.show_fft) {
+        clicked = draw_wave(cursor_p, wave_s, g_s.buffer_fft_r, ARRAY_SIZE(g_s.buffer_fft_r) / 2, 0);
     } else {
-        clicked = DrawWave(&cursor_p, wave_s, g_s.buffer_fft, ARRAY_SIZE(g_s.buffer_fft), g_s.buffer_fft_idx);
+        clicked = draw_wave(cursor_p, wave_s, g_s.buffer_fft, ARRAY_SIZE(g_s.buffer_fft), g_s.buffer_fft_idx);
     }
 
     if (clicked) {
-        show_fft ^= true;
+        g_s.show_fft ^= true;
     }
 
     draw_keys();
 
-    cursor_p.x = g_s.screen_w - GUI_GAP - KNOB_SIZE_W;
-    cursor_p.y = g_s.screen_h - GUI_GAP - KNOB_SIZE_H;
-    if (DrawKnobI("Octave", &cursor_p, KNOB_RADIUS, &g_s.cur_octave, 0, OCTAVE_COUNT - 2, NULL)) {
+    cursor_p->x = g_s.screen_w  - KNOB_SIZE_W;
+    if (draw_knob_i("Octave", cursor_p, &g_s.cur_octave, 0, OCTAVE_COUNT - 2, NULL)) {
         prepare_keys();
     }
 
@@ -950,27 +947,30 @@ void process_ui() {
 }
 
 void draw_ui() {
-    Rectangle tab_r = {GUI_GAP, GUI_GAP, g_s.screen_w - 2 * GUI_GAP, TAB_H};
+    Vector2 cursor_p = {GUI_GAP, GUI_GAP};
+    Vector2 tab_s = {g_s.screen_w - 2 * GUI_GAP, TAB_H};
     const char* tab_l[] = {
         TAB_X(X_STR_ARR)
     };
 
-    DrawTabMenu(tab_r, tab_l, ARRAY_SIZE(tab_l), (int*)&g_s.cur_tab);
+    reset_gui_ctx();
+    set_gui_dir(GD_VERTICAL);
+    draw_tab_menu(&cursor_p, tab_s, tab_l, ARRAY_SIZE(tab_l), (int*)&g_s.cur_tab);
     switch (g_s.cur_tab) {
     case TAB_SYNTH:
-        draw_tab_synth();
+        draw_tab_synth(&cursor_p);
         break;
     case TAB_OSC:
-        draw_tab_osc();
+        draw_tab_osc(&cursor_p);
         break;
     case TAB_ENV:
-        draw_tab_env();
+        draw_tab_env(&cursor_p);
         break;
     case TAB_FLT:
-        draw_tab_filter();
+        draw_tab_filter(&cursor_p);
         break;
     case TAB_KEYS:
-        draw_tab_keys();
+        draw_tab_keys(&cursor_p);
         break;
     }
 }
