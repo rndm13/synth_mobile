@@ -2,14 +2,16 @@
 #include "math.h"
 #include "settings.h"
 
-void fft(float data_re[], float data_im[], const unsigned int N) {
-    rearrange(data_re, data_im, N);
-    compute(data_re, data_im, N);
+#include <stdint.h>
+
+void fft(float data_re[], float data_im[], const uint32_t n) {
+    rearrange(data_re, data_im, n);
+    compute(data_re, data_im, n);
 }
 
-void rearrange(float data_re[], float data_im[], const unsigned int N) {
-    unsigned int target = 0;
-    for(unsigned int position = 0; position < N; position++) {
+void rearrange(float data_re[], float data_im[], const uint32_t n) {
+    uint32_t target = 0;
+    for(uint32_t position = 0; position < n; position++) {
         if(target > position) {
             const float temp_re = data_re[target];
             const float temp_im = data_im[target];
@@ -18,23 +20,25 @@ void rearrange(float data_re[], float data_im[], const unsigned int N) {
             data_re[position] = temp_re;
             data_im[position] = temp_im;
         }
-        unsigned int mask = N;
+        uint32_t mask = n;
         while(target & (mask >>=1)) {
             target &= ~mask;
         }
+
         target |= mask;
     }
 }
 
-void compute(float data_re[], float data_im[], const unsigned int N) {
-    for(unsigned int step = 1; step < N; step <<= 1) {
-        const unsigned int jump = step << 1;
+void compute(float data_re[], float data_im[], const uint32_t n) {
+    for(uint32_t step = 1; step < n; step <<= 1) {
+        const uint32_t jump = step << 1;
         const float step_d = (float) step;
         float twiddle_re = 1.0;
         float twiddle_im = 0.0;
-        for(unsigned int group = 0; group < step; group++) {
-            for(unsigned int pair = group; pair < N; pair += jump) {
-                const unsigned int match = pair + step;
+
+        for(uint32_t group = 0; group < step; group++) {
+            for(uint32_t pair = group; pair < n; pair += jump) {
+                const uint32_t match = pair + step;
                 const float product_re = twiddle_re * data_re[match] - twiddle_im * data_im[match];
                 const float product_im = twiddle_im * data_re[match] + twiddle_re * data_im[match];
                 data_re[match] = data_re[pair] - product_re;
@@ -49,7 +53,7 @@ void compute(float data_re[], float data_im[], const unsigned int N) {
                 continue;
             }
 
-            float angle = -PI*((float) group + 1) / step_d;
+            float angle = -PI * ((float) group + 1) / step_d;
             twiddle_re = cos(angle);
             twiddle_im = sin(angle);
         }
