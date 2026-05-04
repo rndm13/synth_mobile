@@ -3,6 +3,7 @@
 #include <math.h>
 #include <raymath.h>
 #include <complex.h>
+#include <pthread.h>
 
 const char* ft2str(FilterType ft) {
     switch (ft) {
@@ -209,4 +210,51 @@ void downsample_filter_u(Filter* flt, float* buffer, size_t n) {
     for (size_t i = 0; i < n; i++) {
         buffer[i] = flt->oversampled_buffer[i * FLT_OVERSAMPLING];
     }
+}
+
+void init_fir_filter(FIRFilter* fir, float sample_rate) {
+    double ft = FLT_FIR_CUTOFF / sample_rate;
+    double sum = 0;
+
+    for (int i = 0; i < FLT_FIR_TAPS; i++) {
+        int n = i - (FLT_FIR_TAPS - 1) / 2;
+
+        // The Sinc function
+        if (n == 0) {
+            fir->coeffs[i] = 2.0f * ft;
+        } else {
+            fir->coeffs[i] = sinf(2.0f * PI * ft * n) / (PI * n);
+        }
+
+        // Apply Hamming Window
+        float window = 0.54f - 0.46f * cosf(2.0f * PI * i / (FLT_FIR_TAPS - 1));
+        fir->coeffs[i] *= window;
+
+        sum += fir->coeffs[i];
+    }
+
+    // Normalize coefficients so the gain is 1.0 (0dB)
+    for (int i = 0; i < FLT_FIR_TAPS; i++) {
+        fir->coeffs[i] /= sum;
+    }
+}
+
+void init_filter(Filter *flt) {
+    int e = pthread_rwlock_init(&flt->params.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+    flt->params.type = FT_LPF;
+    flt->params.cutoff = FLT_CUTOFF_MAX;
+    flt->params.resonance = FLT_RESONANCE_MIN;
+    flt->params.gain = 0.0f;
+    init_fir_filter(&flt->fir_up, FLT_OVERSAMPLED_RATE);
+    init_fir_filter(&flt->fir_down, FLT_OVERSAMPLED_RATE);
+
+    prepare_filter(flt);
+}
+
+void deinit_filter(Filter *flt) {
+    int e = 0;
+    e = pthread_rwlock_destroy(&flt->params.rw);
 }

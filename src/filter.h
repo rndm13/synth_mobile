@@ -76,3 +76,7 @@ void update_filter(Filter* flt, float* buffer, size_t n);
 float update_fir_filter(FIRFilter *fir, float input);
 void upsample_filter_u(Filter* flt, float* buffer, size_t n);
 void downsample_filter_u(Filter* flt, float* buffer, size_t n);
+
+void init_fir_filter(FIRFilter* fir, float sample_rate);
+void init_filter(Filter *flt);
+void deinit_filter(Filter *flt);

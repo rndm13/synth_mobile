@@ -13,6 +13,9 @@
 #include "gui_elements.h"
 #include "voice.h"
 #include "fft.h"
+
+#include "env.h"
+#include "osc.h"
 #include "filter.h"
 
 typedef struct Key {
@@ -21,48 +24,6 @@ typedef struct Key {
 
     float freq;
 } Key;
-
-typedef struct Env {
-    pthread_rwlock_t rw;
-    float attack;
-    float decay;
-    float sustain;
-    float release;
-} Env;
-
-#define OSC_TYPE_X(X)           \
-    X(OT_SINE, "Sine")          \
-    X(OT_TRIANGLE, "Triangle")  \
-    X(OT_SQUARE, "Square")      \
-    X(OT_SAW, "Sawtooth")       \
-
-typedef enum OscType {
-    OSC_TYPE_X(X_ENUM)
-    OT_MAX,
-} OscType;
-
-typedef struct OscParams {
-    pthread_rwlock_t rw;
-
-    OscType type;
-    int semi;
-    int cents;
-    float volume;
-
-    int unison;
-    int detune;
-
-    double cents_mul; // Calculated from cents
-} OscParams;
-
-typedef struct Osc {
-    // RW protected
-    OscParams params;
-    OscVoiceArr voice_arr;
-
-    // Output
-    float disp_buffer[DISPLAY_BUFFER_SIZE];
-} Osc;
 
 #define TAB_X(X)                \
     X(TAB_SYNTH, "Synth")       \
@@ -120,59 +81,6 @@ typedef struct Synth {
 
 Synth g_s;
 
-double calc_cents_mul(double cents) {
-    return powf(2, cents / CENTS_IN_OCTAVE);
-}
-
-float calc_env_value(float time, bool released, float release_time, float last_env, Env *env) {
-    float result = 0.0f;
-    int e = pthread_rwlock_rdlock(&env->rw);
-    if (e != 0) {
-        // TODO: Log
-        return result;
-    }
-
-    // 1. Handle Release Phase
-    if (released) {
-        float time_in_release = time - release_time;
-        if (time_in_release >= env->release) {
-            result = 0.0f;
-            goto unlock;
-        }
-
-        // We calculate the value starting from the sustain level or previous env value down to 0
-        result = fmin(env->sustain * (1.0f - (time_in_release / env->release)), last_env);
-        goto unlock;
-    }
-
-    // 2. Attack Phase
-    if (time < env->attack) {
-        result = time / env->attack;
-        goto unlock;
-    }
-
-    // 3. Decay Phase
-    float timeInDecay = time - env->attack;
-    if (timeInDecay < env->decay) {
-        float decayProgress = timeInDecay / env->decay;
-
-        result = 1.0f - (decayProgress * (1.0f - env->sustain));
-        goto unlock;
-    }
-
-    // 4. Sustain Phase
-    result = env->sustain;
-
-unlock:
-    e = pthread_rwlock_unlock(&env->rw);
-    if (e != 0) {
-        // TODO: Log
-        return result;
-    }
-
-    return result;
-}
-
 bool key_is_black(int k) {
     static const int black_idx_arr[] = {
         1, 3, 6, 8, 10
@@ -188,29 +96,6 @@ bool key_is_black(int k) {
     }
 
     return false;
-}
-
-float get_osc_kernel(OscType type, int wave_idx, int wave_length) {
-    wave_idx %= wave_length;
-
-    switch (type) {
-        case OT_SINE:
-            return sin(2 * PI * wave_idx / wave_length);
-            break;
-        case OT_TRIANGLE:
-            return 2 * fabs(2 * wave_idx / (float)wave_length - 1.0f) - 1.0f;
-            break;
-        case OT_SQUARE:
-            return (wave_idx / (float)wave_length > 0.5f) ? -1.0f : 1.0f;
-            break;
-        case OT_SAW:
-            return 2 * wave_idx / (float)wave_length - 1.0f;
-            break;
-        default:
-            break;
-    }
-
-    return 0.0f;
 }
 
 void prepare_key_pos() {
@@ -255,7 +140,6 @@ void prepare_keys() {
     }
 }
 
-
 void audio_callback(void *_buffer, unsigned int frames);
 
 void init_audio() {
@@ -268,98 +152,6 @@ void init_audio() {
     SetAudioStreamPan(g_s.stream, g_s.params.pan);
     PlayAudioStream(g_s.stream);
     SetAudioStreamCallback(g_s.stream, audio_callback);
-}
-
-void prepare_osc_display_buffer(Osc* osc) {
-    int e = pthread_rwlock_rdlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    int wave_length = ARRAY_SIZE(osc->disp_buffer);
-    for (int i = 0; i < wave_length; i++) {
-        osc->disp_buffer[i] = get_osc_kernel(osc->params.type, i, wave_length / 2);
-    }
-
-    e = pthread_rwlock_unlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-}
-
-
-void init_env(Env* env) {
-    int e = pthread_rwlock_init(&env->rw, NULL);
-    if (e != 0) {
-        return;
-    }
-
-    env->attack = ENV_A_MIN;
-    env->decay = ENV_D_MIN;
-    env->sustain = 1.0f;
-    env->release = ENV_R_MIN;
-}
-
-void init_osc(Osc* osc) {
-    int e = pthread_rwlock_init(&osc->params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
-    osc_voice_arr_init(&osc->voice_arr);
-    osc->params.type = OT_SINE;
-    osc->params.semi = 0;
-    osc->params.cents = 0;
-    osc->params.unison = OSC_UNISON_MIN;
-    osc->params.detune = OSC_DETUNE_MIN;
-    osc->params.volume = 1.0f;
-
-    osc->params.cents_mul = calc_cents_mul(osc->params.cents);
-
-    prepare_osc_display_buffer(osc);
-}
-
-void init_fir_filter(FIRFilter* fir, float sample_rate) {
-    double ft = FLT_FIR_CUTOFF / sample_rate;
-    double sum = 0;
-
-    for (int i = 0; i < FLT_FIR_TAPS; i++) {
-        int n = i - (FLT_FIR_TAPS - 1) / 2;
-
-        // The Sinc function
-        if (n == 0) {
-            fir->coeffs[i] = 2.0f * ft;
-        } else {
-            fir->coeffs[i] = sinf(2.0f * PI * ft * n) / (PI * n);
-        }
-
-        // Apply Hamming Window
-        float window = 0.54f - 0.46f * cosf(2.0f * PI * i / (FLT_FIR_TAPS - 1));
-        fir->coeffs[i] *= window;
-
-        sum += fir->coeffs[i];
-    }
-
-    // Normalize coefficients so the gain is 1.0 (0dB)
-    for (int i = 0; i < FLT_FIR_TAPS; i++) {
-        fir->coeffs[i] /= sum;
-    }
-}
-
-void init_filter(Filter *flt) {
-    int e = pthread_rwlock_init(&flt->params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
-    flt->params.type = FT_LPF;
-    flt->params.cutoff = FLT_CUTOFF_MAX;
-    flt->params.resonance = FLT_RESONANCE_MIN;
-    flt->params.gain = 0.0f;
-    init_fir_filter(&flt->fir_up, FLT_OVERSAMPLED_RATE);
-    init_fir_filter(&flt->fir_down, FLT_OVERSAMPLED_RATE);
-
-    prepare_filter(flt);
 }
 
 void init_synth() {
@@ -398,19 +190,9 @@ void init_synth() {
     init_audio();
 }
 
-void deinit_env(Env* env) {
-    int e = pthread_rwlock_destroy(&env->rw);
-}
-
-void deinit_osc(Osc* osc) {
-    int e = pthread_rwlock_destroy(&osc->params.rw);
-    osc_voice_arr_deinit(&osc->voice_arr);
-}
-
 void deinit_synth() {
     int e = 0;
     // TODO: Log
-    e = pthread_rwlock_destroy(&g_s.flt.params.rw);
     e = pthread_rwlock_destroy(&g_s.params.rw);
 
     voice_arr_deinit(&g_s.voice_arr);
@@ -423,6 +205,8 @@ void deinit_synth() {
         deinit_osc(&g_s.osc_arr[i]);
     }
 
+    deinit_filter(&g_s.flt);
+
     UnloadAudioStream(g_s.stream);
     CloseAudioDevice();
 }
@@ -432,37 +216,9 @@ void process_screen() {
     g_s.screen_h = GetScreenHeight();
 }
 
-bool point_rect_intersection(Vector2 p, Vector2 rp, Vector2 rs) {
-    return p.x >= rp.x && p.x <= rp.x + rs.x && p.y >= rp.y && p.y <= rp.y + rs.y;
-}
-
-void osc_add_voice(Osc* osc, Voice new_voice) {
-    float detune_mul_arr[OSC_UNISON_MAX] = {0};
-    int detune_idx = 0;
-
-    int e = pthread_rwlock_rdlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    for (size_t i = 0; i < osc->params.unison; i++) {
-        double detune_offset = i - (osc->params.unison - 1) / 2.0;
-        detune_mul_arr[detune_idx++] = calc_cents_mul(osc->params.detune * detune_offset);
-    }
-
-    e = pthread_rwlock_unlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    osc_voice_add_unison(&osc->voice_arr, new_voice, detune_mul_arr, detune_idx, GetTime());
-}
-
 void osc_arr_add_voice(Voice new_voice) {
     for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
-        osc_add_voice(&g_s.osc_arr[i], new_voice);
+        osc_add_voice(&g_s.osc_arr[i], new_voice, GetTime());
     }
 }
 
@@ -496,7 +252,12 @@ void process_keys() {
     for (int i = 0; i < t_count; i++) {
         for (int k = g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF; k < g_s.cur_octave * KEY_OCTAVE + KEY_C_OFF + 2 * KEY_OCTAVE; k++) {
             Key key = g_s.key_arr[k];
-            if (point_rect_intersection(touch_pos[i], key.pos, key.size)) {
+            Rectangle key_rec = {
+                key.pos.x, key.pos.y,
+                key.size.x, key.size.y,
+            };
+
+            if (CheckCollisionPointRec(touch_pos[i], key_rec)) {
                 Voice new_voice = {0};
                 bool hold = voice_hold_key(va, k, &new_voice);
                 if (!hold) {
@@ -513,9 +274,14 @@ void process_keys() {
     for (int v = 0; v < va->voice_count; v++) {
         int k = va->voice_arr[v].key_idx;
         Key key = g_s.key_arr[k];
+        Rectangle key_rec = {
+            key.pos.x, key.pos.y,
+            key.size.x, key.size.y,
+        };
+
         bool found = false;
         for (int i = 0; i < t_count; i++) {
-            if (point_rect_intersection(touch_pos[i], key.pos, key.size)) {
+            if (CheckCollisionPointRec(touch_pos[i], key_rec)) {
                 found = true;
                 break; // Found a touch for the held key.
             }
@@ -547,7 +313,7 @@ void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float wave_
     for (int j = 0; j < n; j++) {
         float wave_length = SAMPLE_RATE / wave_freq;
         float dt = j / (float)SAMPLE_RATE;
-        float kernel = get_osc_kernel(osc->params.type, osc_voice->wave_idx, wave_length);
+        float kernel = calc_osc_value(osc->params.type, osc_voice->wave_idx, wave_length);
 
         osc_voice->env = calc_env_value(
                 time + dt, osc_voice->released,
