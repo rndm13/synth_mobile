@@ -71,6 +71,7 @@ typedef struct Synth {
     SynthProfiling prof;
 
     // Parameters
+    int selected_opt;
     char program_name[PROGRAM_NAME_CAPACITY];
     SynthParams params;
     Osc osc_arr[OSC_COUNT];
@@ -544,16 +545,45 @@ void draw_fps() {
 
 void draw_tab_synth(Vector2* cursor_p) {
     Vector2 tfield_s = { TEXT_FIELD_SIZE_W, TEXT_FIELD_SIZE_H };
+    bool opened = false;
 
-    set_gui_dir(GD_VERTICAL);
-    draw_text_field(cursor_p, tfield_s, g_s.program_name, PROGRAM_NAME_CAPACITY);
+    static const char* opt_arr[] = {
+        "AAA",
+        "BBB",
+        "CCC",
+        "DDD",
+    };
 
+    DropdownData dd = {
+        .active_index = &g_s.selected_opt,
+        .opt_arr = opt_arr,
+        .opt_count = ARRAY_SIZE(opt_arr),
+    };
+
+    Vector2 cursor_p_r1 = *cursor_p;
+    set_gui_dir(GD_HORIZONTAL);
+    draw_text_field(&cursor_p_r1, tfield_s, g_s.program_name, PROGRAM_NAME_CAPACITY);
+
+    if (draw_dropdown("Open", &cursor_p_r1, &dd)) {
+        opened = true;
+        // TODO:
+    }
+
+    if (draw_button("Save", &cursor_p_r1)) {
+        // TODO:
+    }
+
+    DrawText(
+            TextFormat("User chose: %d, %d", g_s.selected_opt, opened),
+            cursor_p_r1.x, cursor_p_r1.y, FONT_SIZE, TEXT_COLOR);
+
+    cursor_p->y += BUTTON_SIZE_H + GUI_GAP;
     Vector2 cursor_p_r2 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
     draw_knob("Amp", &cursor_p_r2, &g_s.params.amp, 0.0f, 1.0f, &g_s.params.rw);
     draw_knob("Pan", &cursor_p_r2, &g_s.params.pan, 0.0f, 1.0f, &g_s.params.rw);
 
-    cursor_p->y += KNOB_SIZE_H;
+    cursor_p->y += KNOB_SIZE_H + GUI_GAP;
     Vector2 cursor_p_r3 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
     draw_toggle("Debug", &cursor_p_r3, &g_s.show_debug, NULL);

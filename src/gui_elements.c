@@ -7,28 +7,18 @@
 
 #include "utils.h"
 
-#define UPDATE_VALUE(updated, v, new_v, rw)                   \
-    do {                                                      \
-        if (*(v) != (new_v)) {                                \
-            if ((rw) != NULL) {                               \
-                pthread_rwlock_wrlock(rw);                    \
-            }                                                 \
-            *(v) = (new_v);                                   \
-            if ((rw) != NULL) {                               \
-                pthread_rwlock_unlock(rw);                    \
-            }                                                 \
-            (updated) = true;                                 \
-        }                                                     \
-    } while (0);                                              \
-
-
 typedef struct GuiContext {
     // Persistent, 0 means that nothing is selected
     size_t selected_idx;
 
     size_t cur_idx;
     GuiDirection dir;
+
     bool draw_tkeyboard;
+
+    bool draw_dropdown;
+    Vector2 dropdown_p;
+    DropdownData dropdown;
 } GuiContext;
 
 static GuiContext g_ctx;
@@ -42,6 +32,11 @@ void finish_gui_ctx(void) {
     if (g_ctx.draw_tkeyboard) {
         draw_keyboard(GetScreenWidth(), GetScreenHeight());
         g_ctx.draw_tkeyboard = false;
+    }
+
+    if (g_ctx.draw_dropdown) {
+        draw_dropdown_menu();
+        g_ctx.draw_dropdown = false;
     }
 }
 
@@ -70,6 +65,20 @@ static bool update_gui_selected_idx(bool clicked, bool reset, size_t idx) {
 
     return selected;
 }
+
+#define UPDATE_VALUE(updated, v, new_v, rw)                   \
+    do {                                                      \
+        if (*(v) != (new_v)) {                                \
+            if ((rw) != NULL) {                               \
+                pthread_rwlock_wrlock(rw);                    \
+            }                                                 \
+            *(v) = (new_v);                                   \
+            if ((rw) != NULL) {                               \
+                pthread_rwlock_unlock(rw);                    \
+            }                                                 \
+            (updated) = true;                                 \
+        }                                                     \
+    } while (0);                                              \
 
 static void update_cursor(Vector2* cursor, float width, float height) {
     if (g_ctx.dir == GD_HORIZONTAL) {
@@ -313,8 +322,8 @@ bool draw_button(const char* label, Vector2 *cursor) {
     size_t gui_idx = get_gui_idx();
 
     int text_w = MeasureText(label, FONT_SIZE);
-    Vector2 size = {GUI_GAP * 2 + text_w, GUI_GAP * 2 + FONT_SIZE};
-    Rectangle rec = {cursor->x, cursor->y, size.x, size.y};
+    Vector2 size = { GUI_GAP * 2 + text_w, BUTTON_SIZE_H };
+    Rectangle rec = { cursor->x, cursor->y, size.x, size.y };
 
     bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
@@ -360,6 +369,87 @@ bool draw_toggle(const char* label, Vector2 *cursor, bool *v, pthread_rwlock_t *
     return updated;
 }
 
+bool draw_dropdown(const char* label, Vector2 *cursor, DropdownData *dropdown) {
+    size_t gui_idx = get_gui_idx();
+
+    int text_w = MeasureText(label, FONT_SIZE);
+    Vector2 size = {GUI_GAP * 2 + text_w, GUI_GAP * 2 + FONT_SIZE};
+    Rectangle rec = {cursor->x, cursor->y, size.x, size.y};
+
+    bool updated = false;
+    bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
+    bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
+    bool reset = false;
+    bool selected = update_gui_selected_idx(clicked, reset, gui_idx);
+
+    if (selected) {
+        Vector2 dd_pos = {
+            cursor->x,
+            cursor->y + size.y,
+        };
+        updated = process_dropdown_menu(dd_pos, dropdown);
+    }
+
+    reset = selected && !hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    if (reset) {
+        reset_gui_selected_idx();
+        selected = false;
+    }
+
+    DrawRectangle(cursor->x, cursor->y, size.x, size.y, DROPDOWN_INNER_COLOR);
+    DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, DROPDOWN_LINE_COLOR);
+    DrawText(label, cursor->x + GUI_GAP, cursor->y + GUI_GAP, FONT_SIZE, TEXT_COLOR);
+
+    update_cursor(cursor, size.x + GUI_GAP, size.y + GUI_GAP);
+
+    return updated;
+}
+
+bool process_dropdown_menu(Vector2 pos, DropdownData *dropdown) {
+    bool updated = false;
+    g_ctx.draw_dropdown = true;
+    g_ctx.dropdown_p = pos;
+    g_ctx.dropdown = *dropdown;
+
+    for (size_t i = 0; i < dropdown->opt_count; i++) {
+        Rectangle rec = {
+            pos.x, pos.y,
+            DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
+        };
+
+        bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
+        bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
+        if (clicked) {
+            updated = true;
+
+            *dropdown->active_index = i;
+        }
+
+        pos.y += DROPDOWN_ITEM_SIZE_H;
+    }
+
+    return updated;
+}
+
+void draw_dropdown_menu() {
+    Vector2 pos = g_ctx.dropdown_p;
+    DropdownData* dropdown = &g_ctx.dropdown;
+    for (size_t i = 0; i < dropdown->opt_count; i++) {
+        DrawRectangle(
+                pos.x, pos.y,
+                DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
+                DROPDOWN_ITEM_INNER_COLOR);
+        DrawRectangleLines(
+                pos.x, pos.y,
+                DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
+                DROPDOWN_ITEM_LINE_COLOR);
+        DrawText(dropdown->opt_arr[i],
+                pos.x + DROPDOWN_ITEM_PAD, pos.y + DROPDOWN_ITEM_PAD, FONT_SIZE, TEXT_COLOR);
+
+        pos.y += DROPDOWN_ITEM_SIZE_H;
+    }
+}
+
 bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity) {
     size_t gui_idx = get_gui_idx();
     size_t v_len = strnlen(v, v_capacity);
@@ -370,6 +460,8 @@ bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity) 
     }
 
     Rectangle rec = {cursor->x, cursor->y, size.x, size.y};
+    int text_w = MeasureText(v, FONT_SIZE);
+    bool show_cursor = fmod(GetTime(), TEXT_FIELD_CURSOR_INTERVAL * 2) > TEXT_FIELD_CURSOR_INTERVAL;
 
     bool updated = false;
     bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
@@ -400,13 +492,10 @@ bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity) 
         selected = false;
     }
 
-    int text_w = MeasureText(v, FONT_SIZE);
-
     DrawRectangle(cursor->x, cursor->y, size.x, size.y, TEXT_FIELD_INNER_COLOR);
     DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, TEXT_FIELD_LINE_COLOR);
     DrawText(v, cursor->x + GUI_GAP, cursor->y + GUI_GAP, FONT_SIZE, TEXT_COLOR);
 
-    bool show_cursor = fmod(GetTime(), TEXT_FIELD_CURSOR_INTERVAL * 2) > TEXT_FIELD_CURSOR_INTERVAL;
     if (selected && show_cursor) {
         Rectangle rec = {
                 cursor->x + GUI_GAP + text_w, cursor->y + GUI_GAP + FONT_SIZE - TEXT_FIELD_CURSOR_SIZE_H,
@@ -496,6 +585,8 @@ bool process_keyboard(int* c, int screen_w, int screen_h) {
                 key_size_w_matr[i][j] = TKEY_SIZE_W;
             }
         }
+        // Set backspace size
+        key_size_w_matr[0][key_arr_size_arr[0] - 1] = TKEY_BACKSPACE_SIZE_W;
     }
 
     for (size_t j = 0; j < key_arr_size_arr[0]; j++) {
@@ -513,7 +604,7 @@ bool process_keyboard(int* c, int screen_w, int screen_h) {
     *c = '\0';
     for (size_t i = 0; i < ARRAY_SIZE(key_matr); i++) {
         int x = center_off_x + line_off_arr[i];
-        int y = screen_h - size_h + i * (TKEY_SIZE_H + TKEY_GAP);
+        int y = screen_h - size_h + i * (TKEY_SIZE_H + TKEY_GAP) + TKEY_GAP;
         for (size_t j = 0; j < key_arr_size_arr[i]; j++) {
             Rectangle rec = {x, y, key_size_w_matr[i][j], TKEY_SIZE_H};
             bool hovered = CheckCollisionPointRec(m_pos, rec);
@@ -547,12 +638,12 @@ void draw_keyboard(int screen_w, int screen_h) {
     int center_off_x = (screen_w - l1_size_w) / 2;
     Vector2 m_pos = GetMousePosition();
 
-    DrawRectangle(TKEY_GAP, screen_h - size_h, size_w, size_h, TKEY_BG_COLOR);
+    DrawRectangle(TKEY_GAP, screen_h - size_h, size_w, size_h, TKEY_INNER_COLOR);
     DrawRectangleLines(TKEY_GAP, screen_h - size_h, size_w, size_h, TKEY_LINE_COLOR);
 
     for (size_t i = 0; i < ARRAY_SIZE(key_matr); i++) {
         int x = center_off_x + line_off_arr[i];
-        int y = screen_h - size_h + i * (TKEY_SIZE_H + TKEY_GAP);
+        int y = screen_h - size_h + i * (TKEY_SIZE_H + TKEY_GAP) + TKEY_GAP;
         for (size_t j = 0; j < key_arr_size_arr[i]; j++) {
             Rectangle rec = {x, y, key_size_w_matr[i][j], TKEY_SIZE_H};
             bool hovered = CheckCollisionPointRec(m_pos, rec);

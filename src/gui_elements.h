@@ -43,7 +43,7 @@
 
 #define BUTTON_INNER_COLOR          LIGHTGRAY
 #define BUTTON_LINE_COLOR           BLACK
-#define BUTTON_LINE_THICKNESS       1.0f
+#define BUTTON_SIZE_H               (FONT_SIZE + GUI_GAP * 2)
 
 #define TOGGLE_INACTIVE_COLOR       RAYWHITE
 #define TOGGLE_ACTIVE_COLOR         GRAY
@@ -65,15 +65,16 @@
 #define SLIDER_SIZE_W               500
 #define SLIDER_SIZE_H               50
 
-#define TKEY_SIZE_W                 65
-#define TKEY_SIZE_H                 30
+#define TKEY_SIZE_W                 55
 #define TKEY_SPACE_SIZE_W           (TKEY_SIZE_W * 5)
+#define TKEY_BACKSPACE_SIZE_W       (TKEY_SIZE_W + 20)
+#define TKEY_SIZE_H                 30
 #define TKEY_GAP                    5
 
 #define TKEY_ACTIVE_COLOR           DARKGRAY
 #define TKEY_INACTIVE_COLOR         RAYWHITE
 #define TKEY_LINE_COLOR             BLACK
-#define TKEY_BG_COLOR               RAYWHITE
+#define TKEY_INNER_COLOR            RAYWHITE
 
 #define TEXT_FIELD_CURSOR_COLOR     TEXT_COLOR
 #define TEXT_FIELD_CURSOR_INTERVAL  0.5
@@ -82,7 +83,16 @@
 #define TEXT_FIELD_INNER_COLOR      LIGHTGRAY
 #define TEXT_FIELD_LINE_COLOR       BLACK
 #define TEXT_FIELD_SIZE_W           250
-#define TEXT_FIELD_SIZE_H           35
+#define TEXT_FIELD_SIZE_H           (FONT_SIZE + GUI_GAP * 2)
+
+#define DROPDOWN_INNER_COLOR        LIGHTGRAY
+#define DROPDOWN_LINE_COLOR         BLACK
+
+#define DROPDOWN_ITEM_INNER_COLOR   LIGHTGRAY
+#define DROPDOWN_ITEM_LINE_COLOR    BLACK
+#define DROPDOWN_ITEM_SIZE_W        300
+#define DROPDOWN_ITEM_SIZE_H        30
+#define DROPDOWN_ITEM_PAD           5
 
 #define FONT_SIZE                   20
 #define MAX_TOUCH_POINTS            10
@@ -115,5 +125,18 @@ bool draw_button(const char* label, Vector2 *cursor);
 bool draw_toggle(const char* label, Vector2 *cursor, bool *v, pthread_rwlock_t *rw);
 
 bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity);
+
 bool process_keyboard(int* c, int screen_w, int screen_h);
 void draw_keyboard(int screen_w, int screen_h);
+
+typedef struct DropdownData {
+    const char **opt_arr;
+    int opt_count;
+
+    int *active_index;
+} DropdownData;
+
+bool draw_dropdown(const char* label, Vector2 *cursor, DropdownData *dropdown);
+
+bool process_dropdown_menu(Vector2 pos, DropdownData *dropdown);
+void draw_dropdown_menu();
