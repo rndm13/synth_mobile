@@ -1,11 +1,5 @@
 [
 {
-  "directory": "/home/rndm/Programming/c/synth_mobile/build",
-  "command": "/usr/bin/cc -DASSET=\\\"../assets/\\\" -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/rndm/Programming/c/synth_mobile/raylib/src -I/home/rndm/Programming/c/synth_mobile/raylib/src/external/glfw/include -std=gnu11 -o CMakeFiles/synth_mobile.dir/src/main.c.o -c /home/rndm/Programming/c/synth_mobile/src/main.c",
-  "file": "/home/rndm/Programming/c/synth_mobile/src/main.c",
-  "output": "CMakeFiles/synth_mobile.dir/src/main.c.o"
-},
-{
   "directory": "/home/rndm/Programming/c/synth_mobile/build/raylib/raylib",
   "command": "/usr/bin/cc -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/rndm/Programming/c/synth_mobile/raylib/src -isystem /home/rndm/Programming/c/synth_mobile/raylib/src/external/glfw/include -fno-strict-aliasing -Werror=implicit-function-declaration -Werror=pointer-arith  -std=gnu99 -o CMakeFiles/raylib.dir/raudio.c.o -c /home/rndm/Programming/c/synth_mobile/raylib/src/raudio.c",
   "file": "/home/rndm/Programming/c/synth_mobile/raylib/src/raudio.c",
@@ -187,8 +181,14 @@
 },
 {
   "directory": "/home/rndm/Programming/c/synth_mobile/build/src",
-  "command": "/usr/bin/cc -DGRAPHICS_API_OPENGL_33 -DPLATFORM_DESKTOP -I/home/rndm/Programming/c/synth_mobile/raylib/src -I/home/rndm/Programming/c/synth_mobile/raylib/src/external/glfw/include -std=gnu11 -o CMakeFiles/gui_elements.dir/gui_elements.c.o -c /home/rndm/Programming/c/synth_mobile/src/gui_elements.c",
+  "command": "android/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang -c src/gui_elements.c -o android/build/obj/gui_elements.c.o -I. -Iinclude -I../include -Iandroid/ndk/sources/android/native_app_glue -Iandroid/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -Iraylib/src -Iandroid/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android -ffunction-sections -funwind-tables -fstack-protector-strong -fPIC -Wall -Wformat -Werror=format-security -no-canonical-prefixes -DANDROID -DPLATFORM_ANDROID -D__ANDROID_API__=34",
   "file": "/home/rndm/Programming/c/synth_mobile/src/gui_elements.c",
   "output": "src/CMakeFiles/gui_elements.dir/gui_elements.c.o"
+},
+{
+  "directory": "/home/rndm/Programming/c/synth_mobile/build",
+  "command": "android/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android34-clang -c src/main.c -o android/build/obj/main.c.o -I. -Iinclude -I../include -Iandroid/ndk/sources/android/native_app_glue -Iandroid/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -Iraylib/src -Iandroid/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android -ffunction-sections -funwind-tables -fstack-protector-strong -fPIC -Wall -Wformat -Werror=format-security -no-canonical-prefixes -DANDROID -DPLATFORM_ANDROID -D__ANDROID_API__=34",
+  "file": "/home/rndm/Programming/c/synth_mobile/src/main.c",
+  "output": "CMakeFiles/synth_mobile.dir/src/main.c.o"
 },
 ]
