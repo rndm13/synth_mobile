@@ -1,12 +1,15 @@
-#include "raylib.h"
-#include "raymath.h"
-
+#include <ftw.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <math.h>
 #include <stddef.h>
 #include <complex.h>
 #include <pthread.h>
 #include <string.h>
 #include <time.h>
+
+#include "raylib.h"
+#include "raymath.h"
 
 #include "utils.h"
 #include "settings.h"
@@ -17,6 +20,9 @@
 #include "env.h"
 #include "osc.h"
 #include "filter.h"
+#include "ini.h"
+
+#define MIN(A, B) ((A) < (B) ? (A) : (B))
 
 typedef struct Key {
     Vector2 pos;
@@ -48,6 +54,13 @@ typedef struct SynthProfiling {
     timespec_t total_time;
 } SynthProfiling;
 
+typedef struct ProgramSelection {
+    char   filepath_arr[PROGRAM_COUNT_MAX][FILEPATH_CAPACITY];
+    char   program_name_arr[PROGRAM_COUNT_MAX][PROGRAM_NAME_CAPACITY];
+    size_t program_count;
+    int    selected_program_idx;
+} ProgramSelection;
+
 typedef struct Synth {
     int screen_w;
     int screen_h;
@@ -70,8 +83,9 @@ typedef struct Synth {
     bool show_prof;
     SynthProfiling prof;
 
+    ProgramSelection program_selection;
+
     // Parameters
-    int selected_opt;
     char program_name[PROGRAM_NAME_CAPACITY];
     SynthParams params;
     Osc osc_arr[OSC_COUNT];
@@ -81,6 +95,123 @@ typedef struct Synth {
 } Synth;
 
 Synth g_s;
+
+int add_program_entry(
+        const char *filepath, const struct stat *info,
+        const int typeflag, struct FTW *pathinfo) {
+    const char* filename = filepath + pathinfo->base;
+
+    const char* extension_substr = strstr(filename, PROGRAM_EXTENSION);
+    if (extension_substr == NULL) {
+        return 0;
+    }
+
+    size_t program_len = MIN(extension_substr - filename, PROGRAM_NAME_CAPACITY);
+
+    snprintf(g_s.program_selection.filepath_arr[g_s.program_selection.program_count], FILEPATH_CAPACITY, "%s", filepath);
+    snprintf(g_s.program_selection.program_name_arr[g_s.program_selection.program_count], program_len, "%s", filename);
+
+    g_s.program_selection.program_count++;
+
+    return 0;
+}
+
+void init_program_selection() {
+    g_s.program_selection.program_count = 0;
+    g_s.program_selection.selected_program_idx = 0;
+
+    nftw(PROGRAM_EXTENSION, add_program_entry, 10, FTW_PHYS);
+}
+
+void add_program() {
+    char filepath[FILEPATH_CAPACITY] = {0};
+
+    memset(filepath, 0, ARRAY_SIZE(filepath));
+
+    snprintf(
+        filepath, FILEPATH_CAPACITY,
+        "%s/%s%s", PROGRAM_PATH, g_s.program_name, PROGRAM_EXTENSION);
+
+    snprintf(
+        g_s.program_selection.filepath_arr[g_s.program_selection.program_count],
+        FILEPATH_CAPACITY, "%s", filepath);
+    snprintf(
+        g_s.program_selection.program_name_arr[g_s.program_selection.program_count],
+        PROGRAM_NAME_CAPACITY, "%s", g_s.program_name);
+
+    g_s.program_selection.program_count++;
+}
+
+void save_program() {
+    const char* current_program = g_s.program_selection.program_name_arr[g_s.program_selection.selected_program_idx];
+
+    if (0 != strncmp(current_program, g_s.program_name, PROGRAM_NAME_CAPACITY)) {
+        add_program();
+    }
+}
+
+void open_program() {
+    uint32_t seed = 0;
+
+    snprintf(
+        g_s.program_name, PROGRAM_NAME_CAPACITY,
+        "%s", g_s.program_selection.program_name_arr[g_s.program_selection.selected_program_idx]);
+
+    for (int i = 0; i < ARRAY_SIZE(g_s.program_name); i++) {
+        seed += g_s.program_name[i];
+    }
+
+    srand(seed);
+
+#define RAND_RANGE(min, max) ((rand() % ((max) - (min))) + (min))
+#define RAND_RANGEF(min, max) (RAND_RANGE((int)((min) * 100), (int)((max) * 100)) / 100.0f)
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        OscParams *params = &g_s.osc_arr[i].params;
+        pthread_rwlock_wrlock(&params->rw);
+
+        params->cents = RAND_RANGE(-OSC_CENTS_RANGE, OSC_CENTS_RANGE);
+        params->detune = RAND_RANGE(OSC_DETUNE_MIN, OSC_DETUNE_MAX);
+        params->unison = RAND_RANGE(OSC_UNISON_MIN, OSC_UNISON_MAX);
+        params->semi = RAND_RANGE(-OSC_SEMI_RANGE, OSC_SEMI_RANGE);
+        params->volume = RAND_RANGEF(0, 1);
+        params->type = RAND_RANGE(0, OT_MAX);
+        params->cents_mul = calc_cents_mul(params->cents);
+
+        pthread_rwlock_unlock(&params->rw);
+
+        prepare_osc_display_buffer(&g_s.osc_arr[i]);
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
+        Env *params = &g_s.env_arr[i];
+        pthread_rwlock_wrlock(&params->rw);
+
+        params->attack = RAND_RANGEF(ENV_A_MIN, ENV_A_MAX);
+        params->decay = RAND_RANGEF(ENV_D_MIN, ENV_D_MAX);
+        params->sustain = RAND_RANGEF(0, 1);
+        params->release = RAND_RANGEF(ENV_R_MIN, ENV_R_MAX);
+
+        pthread_rwlock_unlock(&params->rw);
+    }
+
+    {
+        FilterParams *params = &g_s.flt.params;
+        pthread_rwlock_wrlock(&params->rw);
+
+        params->cutoff = RAND_RANGEF(FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
+        params->gain = RAND_RANGEF(FLT_GAIN_MIN, FLT_GAIN_MAX);
+
+        pthread_rwlock_unlock(&params->rw);
+
+        prepare_filter(&g_s.flt);
+    }
+
+    g_s.cur_octave = 3;
+
+#undef RAND_RANGE
+#undef RAND_RANGEF
+}
 
 bool key_is_black(int k) {
     static const int black_idx_arr[] = {
@@ -99,7 +230,7 @@ bool key_is_black(int k) {
     return false;
 }
 
-void prepare_key_pos() {
+void init_key_positions() {
     const float k_w = KEY_WIDTH;
     const float k_ws = GUI_GAP;
     const float k_h = KEY_HEIGHT;
@@ -133,8 +264,8 @@ void prepare_key_pos() {
     }
 }
 
-void prepare_keys() {
-    prepare_key_pos();
+void init_keys() {
+    init_key_positions();
 
     for (int i = 0; i < ARRAY_SIZE(g_s.key_arr); i++) {
         g_s.key_arr[i].freq = powf(2.0f, (float)(i - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
@@ -187,7 +318,8 @@ void init_synth() {
 
     init_filter(&g_s.flt);
 
-    prepare_keys();
+    init_program_selection();
+    init_keys();
     init_audio();
 }
 
@@ -374,7 +506,6 @@ params_unlock:
         // TODO: Log
         return;
     }
-
 }
 
 void update_stream(float* buffer, size_t n) {
@@ -414,17 +545,6 @@ void update_fft() {
     for (size_t i = 0; i < FFT_BUFFER_SIZE / 2; i++) {
         g_s.buffer_fft_r[i] = sqrt(powf(g_s.buffer_fft_r[i], 2) + powf(g_s.buffer_fft_i[i], 2)) / (BUFFER_SIZE / 16.0);
     }
-
-    // float max_value = 0.0f;
-    // for (size_t i = 0; i < FFT_BUFFER_SIZE / 2; i++) {
-    //     max_value = fmax(max_value, g_s.buffer_fft_r[i]);
-    // }
-    //
-    // if (!FloatEquals(max_value, 0)) {
-    //     for (size_t i = 0; i < FFT_BUFFER_SIZE / 2; i++) {
-    //         g_s.buffer_fft_r[i] /= max_value;
-    //     }
-    // }
 }
 
 timespec_t duration_from(timespec_t start_time) {
@@ -545,49 +665,29 @@ void draw_fps() {
 
 void draw_tab_synth(Vector2* cursor_p) {
     Vector2 tfield_s = { TEXT_FIELD_SIZE_W, TEXT_FIELD_SIZE_H };
-    bool opened = false;
 
-    static const char* opt_arr[] = {
-        "AAA0",
-        "BBB0",
-        "CCC0",
-        "DDD0",
-        "AAA1",
-        "BBB1",
-        "CCC1",
-        "DDD1",
-        "AAA2",
-        "BBB2",
-        "CCC2",
-        "DDD2",
-        "AAA3",
-        "BBB3",
-        "CCC3",
-        "DDD3",
-    };
-
+    const char* opt_arr[PROGRAM_COUNT_MAX] = {};
     DropdownData dd = {
-        .active_idx = &g_s.selected_opt,
+        .active_idx = &g_s.program_selection.selected_program_idx,
         .opt_arr = opt_arr,
-        .opt_count = ARRAY_SIZE(opt_arr),
+        .opt_count = g_s.program_selection.program_count,
     };
+
+    for (size_t i = 0; i < g_s.program_selection.program_count; i++) {
+        opt_arr[i] = g_s.program_selection.program_name_arr[i];
+    }
 
     Vector2 cursor_p_r1 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
     draw_text_field(&cursor_p_r1, tfield_s, g_s.program_name, PROGRAM_NAME_CAPACITY);
 
     if (draw_dropdown("Open", &cursor_p_r1, &dd)) {
-        opened = true;
-        // TODO:
+        open_program();
     }
 
     if (draw_button("Save", &cursor_p_r1)) {
-        // TODO:
+        save_program();
     }
-
-    DrawText(
-            TextFormat("User chose: %d, %d", g_s.selected_opt, opened),
-            cursor_p_r1.x, cursor_p_r1.y, FONT_SIZE, TEXT_COLOR);
 
     cursor_p->y += BUTTON_SIZE_H + GUI_GAP;
     Vector2 cursor_p_r2 = *cursor_p;
@@ -746,7 +846,7 @@ void draw_tab_keys(Vector2* cursor_p) {
 
     cursor_p->x = g_s.screen_w  - KNOB_SIZE_W;
     if (draw_knob_i("Octave", cursor_p, &g_s.cur_octave, 0, OCTAVE_COUNT - 2, NULL)) {
-        prepare_keys();
+        init_keys();
     }
 
     if (g_s.show_debug) {

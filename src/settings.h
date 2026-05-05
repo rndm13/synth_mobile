@@ -39,6 +39,11 @@
 #define CENTS_IN_OCTAVE (CENTS_IN_SEMI * KEY_OCTAVE)
 
 #define PROGRAM_NAME_CAPACITY 16
-#define PROGRAM_NAME_INIT "INIT SYNTH"
+#define PROGRAM_NAME_INIT     "INIT SYNTH"
+#define PROGRAM_COUNT_MAX     128
+#define FILEPATH_CAPACITY     128
+
+#define PROGRAM_PATH          "assets"
+#define PROGRAM_EXTENSION     ".ini"
 
 typedef struct timespec timespec_t;
