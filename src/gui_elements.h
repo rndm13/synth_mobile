@@ -100,6 +100,8 @@
 #define KNOB_SIZE_W                 (2 * KNOB_RADIUS + GUI_GAP)
 #define KNOB_SIZE_H                 (2 * FONT_SIZE + 2 * KNOB_RADIUS + 3 * GUI_GAP)
 
+#define CLICK_MAX_TIME_S            0.1
+
 typedef enum GuiScaling {
     GS_LINEAR,
     GS_LOG,
@@ -133,7 +135,7 @@ typedef struct DropdownData {
     const char **opt_arr;
     int opt_count;
 
-    int *active_index;
+    int *active_idx;
 } DropdownData;
 
 bool draw_dropdown(const char* label, Vector2 *cursor, DropdownData *dropdown);

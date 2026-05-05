@@ -548,14 +548,26 @@ void draw_tab_synth(Vector2* cursor_p) {
     bool opened = false;
 
     static const char* opt_arr[] = {
-        "AAA",
-        "BBB",
-        "CCC",
-        "DDD",
+        "AAA0",
+        "BBB0",
+        "CCC0",
+        "DDD0",
+        "AAA1",
+        "BBB1",
+        "CCC1",
+        "DDD1",
+        "AAA2",
+        "BBB2",
+        "CCC2",
+        "DDD2",
+        "AAA3",
+        "BBB3",
+        "CCC3",
+        "DDD3",
     };
 
     DropdownData dd = {
-        .active_index = &g_s.selected_opt,
+        .active_idx = &g_s.selected_opt,
         .opt_arr = opt_arr,
         .opt_count = ARRAY_SIZE(opt_arr),
     };

@@ -18,6 +18,7 @@ typedef struct GuiContext {
 
     bool draw_dropdown;
     Vector2 dropdown_p;
+    float dropdown_scroll;
     DropdownData dropdown;
 } GuiContext;
 
@@ -376,10 +377,12 @@ bool draw_dropdown(const char* label, Vector2 *cursor, DropdownData *dropdown) {
     Vector2 size = {GUI_GAP * 2 + text_w, GUI_GAP * 2 + FONT_SIZE};
     Rectangle rec = {cursor->x, cursor->y, size.x, size.y};
 
+    int old_idx = *dropdown->active_idx;
     bool updated = false;
     bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
     bool reset = false;
+    bool prevent_reset = false;
     bool selected = update_gui_selected_idx(clicked, reset, gui_idx);
 
     if (selected) {
@@ -387,10 +390,11 @@ bool draw_dropdown(const char* label, Vector2 *cursor, DropdownData *dropdown) {
             cursor->x,
             cursor->y + size.y,
         };
-        updated = process_dropdown_menu(dd_pos, dropdown);
+
+        prevent_reset = process_dropdown_menu(dd_pos, dropdown);
     }
 
-    reset = selected && !hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    reset = selected && !prevent_reset && !hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
     if (reset) {
         reset_gui_selected_idx();
         selected = false;
@@ -402,37 +406,68 @@ bool draw_dropdown(const char* label, Vector2 *cursor, DropdownData *dropdown) {
 
     update_cursor(cursor, size.x + GUI_GAP, size.y + GUI_GAP);
 
+    updated = old_idx != *dropdown->active_idx;
+
     return updated;
 }
 
+/* TODO: refactor this mess... */
 bool process_dropdown_menu(Vector2 pos, DropdownData *dropdown) {
-    bool updated = false;
+    static float hold_time = 0;
+    static Vector2 mouse_p = {};
+    bool mouse_clicked = false;
+
+    pos.y += g_ctx.dropdown_scroll;
+
+    Rectangle rec = {
+        pos.x, pos.y,
+        DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H * dropdown->opt_count,
+    };
+
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        hold_time += GetFrameTime();
+        mouse_p = GetMousePosition();
+    } else {
+        mouse_clicked = 0 < hold_time && hold_time <= CLICK_MAX_TIME_S;
+        hold_time = 0;
+    }
+
+    bool hovering = CheckCollisionPointRec(mouse_p, rec);
+    bool dragged = IsMouseButtonDown(MOUSE_BUTTON_LEFT) && hovering;
+    bool prevent_reset = dragged;
+    bool outside_screen = (rec.y + rec.height) > GetScreenHeight() || rec.y < 0;
+
+    if (dragged && outside_screen) {
+        g_ctx.dropdown_scroll += GetMouseDelta().y;
+        g_ctx.dropdown_scroll = Clamp(g_ctx.dropdown_scroll, -rec.height, 0);
+    }
+
     g_ctx.draw_dropdown = true;
     g_ctx.dropdown_p = pos;
     g_ctx.dropdown = *dropdown;
 
     for (size_t i = 0; i < dropdown->opt_count; i++) {
-        Rectangle rec = {
+        Rectangle item_rec = {
             pos.x, pos.y,
             DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
         };
 
-        bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
-        bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
+        hovering = CheckCollisionPointRec(mouse_p, item_rec);
+        bool clicked = mouse_clicked && hovering;
         if (clicked) {
-            updated = true;
-
-            *dropdown->active_index = i;
+            *dropdown->active_idx = i;
+            prevent_reset = false;
         }
 
         pos.y += DROPDOWN_ITEM_SIZE_H;
     }
 
-    return updated;
+    return prevent_reset;
 }
 
 void draw_dropdown_menu() {
     Vector2 pos = g_ctx.dropdown_p;
+
     DropdownData* dropdown = &g_ctx.dropdown;
     for (size_t i = 0; i < dropdown->opt_count; i++) {
         DrawRectangle(
@@ -463,7 +498,7 @@ bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity) 
     int text_w = MeasureText(v, FONT_SIZE);
     bool show_cursor = fmod(GetTime(), TEXT_FIELD_CURSOR_INTERVAL * 2) > TEXT_FIELD_CURSOR_INTERVAL;
 
-    bool updated = false;
+    bool prevent_reset = false;
     bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
     bool reset = false;
@@ -471,7 +506,7 @@ bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity) 
 
     if (selected) {
         int new_k = 0;
-        updated = process_keyboard(&new_k, GetScreenWidth(), GetScreenHeight());
+        prevent_reset = process_keyboard(&new_k, GetScreenWidth(), GetScreenHeight());
 
         if (new_k == KEY_BACKSPACE) {
             if (v_len > 0) {
@@ -486,7 +521,7 @@ bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity) 
     }
 
     // Not clicked on keyboard and clicked outside of input element
-    reset = selected && !updated && !hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    reset = selected && !prevent_reset && !hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
     if (reset) {
         reset_gui_selected_idx();
         selected = false;
@@ -506,7 +541,8 @@ bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity) 
 
     update_cursor(cursor, size.x + GUI_GAP, size.y + GUI_GAP);
 
-    return updated;
+    // Return true only when the user finishes typing.
+    return reset;
 }
 
 static const char *get_key_label(int key);
@@ -599,7 +635,7 @@ bool process_keyboard(int* c, int screen_w, int screen_h) {
 
     Rectangle rec = {0, screen_h - size_h, size_w, size_h};
     bool hovered = CheckCollisionPointRec(m_pos, rec);
-    bool updated = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovered;
+    bool prevent_reset = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovered;
 
     *c = '\0';
     for (size_t i = 0; i < ARRAY_SIZE(key_matr); i++) {
@@ -620,7 +656,7 @@ bool process_keyboard(int* c, int screen_w, int screen_h) {
 
     g_ctx.draw_tkeyboard = true;
 
-    return updated;
+    return prevent_reset;
 }
 
 void draw_keyboard(int screen_w, int screen_h) {
