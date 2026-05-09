@@ -84,7 +84,7 @@ static void osc_voice_set(OscVoiceArr* ov, int ov_idx, Voice v, float detune_mul
     ov->osc_voice_arr[ov_idx].release_time = 0;
     ov->osc_voice_arr[ov_idx].released = false;
 
-    ov->osc_voice_arr[ov_idx].env = 0;
+    ov->osc_voice_arr[ov_idx].last_env = 0;
     ov->osc_voice_arr[ov_idx].wave_idx = 0;
 }
 
@@ -94,7 +94,7 @@ static void osc_voice_reset(OscVoiceArr* ov, int ov_idx) {
     ov->osc_voice_arr[ov_idx].wave_idx = 0;
     ov->osc_voice_arr[ov_idx].start_time = 0;
     ov->osc_voice_arr[ov_idx].release_time = 0;
-    ov->osc_voice_arr[ov_idx].env = 0;
+    ov->osc_voice_arr[ov_idx].last_env = 0;
     ov->osc_voice_arr[ov_idx].released = false;
 }
 
@@ -166,7 +166,7 @@ void osc_voice_gc(OscVoiceArr *ov) {
         while (
             i < ov->osc_voice_count &&
             ov->osc_voice_arr[i].released &&
-            ov->osc_voice_arr[i].env == 0
+            ov->osc_voice_arr[i].last_env == 0
         ) {
             // Hopefully this works fine-ish
             pthread_rwlock_unlock(&ov->rw);

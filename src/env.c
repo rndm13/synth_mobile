@@ -5,6 +5,9 @@
 
 float calc_env_value(float time, bool released, float release_time, float last_env, Env *env) {
     float result = 0.0f;
+    float time_in_release = time - release_time;
+    float time_in_decay = time - env->attack;
+    float decay_progress = time_in_decay / env->decay;
     int e = pthread_rwlock_rdlock(&env->rw);
     if (e != 0) {
         // TODO: Log
@@ -13,14 +16,14 @@ float calc_env_value(float time, bool released, float release_time, float last_e
 
     // 1. Handle Release Phase
     if (released) {
-        float time_in_release = time - release_time;
+        time_in_release = time - release_time;
         if (time_in_release >= env->release) {
             result = 0.0f;
             goto unlock;
         }
 
-        // We calculate the value starting from the sustain level or previous env value down to 0
-        result = fmin(env->sustain * (1.0f - (time_in_release / env->release)), last_env);
+        result = last_env * (1.0f - (time_in_release / env->release));
+
         goto unlock;
     }
 
@@ -31,11 +34,8 @@ float calc_env_value(float time, bool released, float release_time, float last_e
     }
 
     // 3. Decay Phase
-    float timeInDecay = time - env->attack;
-    if (timeInDecay < env->decay) {
-        float decayProgress = timeInDecay / env->decay;
-
-        result = 1.0f - (decayProgress * (1.0f - env->sustain));
+    if (time_in_decay < env->decay) {
+        result = 1.0f - (decay_progress * (1.0f - env->sustain));
         goto unlock;
     }
 
@@ -65,6 +65,5 @@ void init_env(Env* env) {
 }
 
 void deinit_env(Env* env) {
-    int e = pthread_rwlock_destroy(&env->rw);
+    pthread_rwlock_destroy(&env->rw);
 }
-

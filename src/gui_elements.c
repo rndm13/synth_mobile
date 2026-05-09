@@ -1,10 +1,13 @@
 #include "gui_elements.h"
 #include "raylib.h"
+#include <stdarg.h>
 #include <pthread.h>
 #include <raymath.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
+#include "src/settings.h"
 #include "utils.h"
 
 #define MAX_GUI_ID_STACK_DEPTH     10
@@ -19,6 +22,11 @@ typedef struct DropdownData {
 
     float scroll;
 } DropdownData;
+
+typedef struct ToastData {
+    char msg[ERR_MSG_CAPACITY];
+    float ttl;
+} ToastData;
 
 typedef struct TKeyboardData {
     bool draw_tkeyboard;
@@ -40,20 +48,11 @@ typedef struct GuiContext {
 
     TKeyboardData active_tkeyboard;
     DropdownData active_dropdown;
+    ToastData toast_arr[MAX_TOAST_COUNT];
+    size_t toast_count;
 } GuiContext;
 
 static GuiContext g_ctx;
-
-void start_gui_ctx(void) {
-    g_ctx.dir = GD_VERTICAL;
-
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-        g_ctx.mouse_hold_time += GetFrameTime();
-        g_ctx.mouse_p = GetMousePosition();
-    } else {
-        g_ctx.mouse_hold_time = 0;
-    }
-}
 
 bool mouse_clicked(void) {
     bool mouse_clicked = 0 < g_ctx.mouse_hold_time && g_ctx.mouse_hold_time <= CLICK_MAX_TIME_S;
@@ -80,13 +79,17 @@ static size_t hash_label(const char* label) {
     return hash;
 }
 
-static void push_gui_id(const char* label) {
+void push_gui_id_i(int id) {
+    g_ctx.cur_id.stack[g_ctx.cur_id.size++] = id;
+}
+
+void push_gui_id(const char* label) {
     size_t id = hash_label(label);
 
     g_ctx.cur_id.stack[g_ctx.cur_id.size++] = id;
 }
 
-static void pop_gui_id() {
+void pop_gui_id() {
     g_ctx.cur_id.stack[--g_ctx.cur_id.size] = 0;
 }
 
@@ -630,6 +633,73 @@ bool draw_text_field(const char* label, Vector2 *cursor, Vector2 size, char* v, 
     return prevent_reset;
 }
 
+void add_toast(const char* fmt, ...) {
+    ToastData td = {};
+    va_list varg;
+
+    va_start(varg, fmt);
+
+    td.ttl = TOAST_INITIAL_TTL;
+    vsnprintf(td.msg, ERR_MSG_CAPACITY, fmt, varg);
+
+    if (g_ctx.toast_count < MAX_TOAST_COUNT) {
+        g_ctx.toast_arr[g_ctx.toast_count++] = td;
+    } else {
+        g_ctx.toast_arr[MAX_TOAST_COUNT - 1] = td;
+    }
+
+    va_end(varg);
+}
+
+static void remove_last_toast(void) {
+    g_ctx.toast_count--;
+
+    for (size_t i = 0; i < MAX_TOAST_COUNT - 1; i++) {
+        g_ctx.toast_arr[i] = g_ctx.toast_arr[i + 1];
+    }
+}
+
+static void process_toast_arr(void) {
+    if (g_ctx.toast_count <= 0) {
+        return;
+    }
+
+    for (size_t i = 0; i < g_ctx.toast_count; i++) {
+        g_ctx.toast_arr[i].ttl -= GetFrameTime();
+    }
+
+    if (g_ctx.toast_arr[0].ttl <= 0) {
+        remove_last_toast();
+    }
+}
+
+static void draw_toast_arr(void) {
+    Vector2 cursor = {
+        // GetScreenWidth() - GUI_GAP - TOAST_SIZE_W,
+        // GetScreenHeight() - GUI_GAP - TOAST_SIZE_H
+        GUI_GAP, GUI_GAP
+    };
+    Rectangle rec = {};
+
+    rec.width = TOAST_SIZE_W;
+    rec.height = TOAST_SIZE_H;
+
+    for (ssize_t i = 0; i < g_ctx.toast_count; i++) {
+        rec.x = cursor.x;
+        rec.y = cursor.y;
+
+        DrawRectangleRec(rec, TOAST_INNER_COLOR);
+        DrawRectangleLinesEx(rec, TOAST_LINE_THICKNESS, TOAST_LINE_COLOR);
+        DrawText(
+                g_ctx.toast_arr[i].msg, cursor.x + GUI_GAP, cursor.y + GUI_GAP,
+                FONT_SIZE, TEXT_COLOR);
+
+        cursor.y += GUI_GAP + TOAST_SIZE_H;
+    }
+
+    // DrawText(TextFormat("toast_cnt: %zu\nx %f\ny %f", g_ctx.toast_count, cursor.x, cursor.y), 0, 0, FONT_SIZE, TEXT_COLOR);
+}
+
 static int tk_l1_key_arr[] = {
     KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE,
     KEY_SIX, KEY_SEVEN, KEY_EIGHT, KEY_NINE, KEY_ZERO,
@@ -834,6 +904,19 @@ static const char *get_key_label(int key) {
     }
 }
 
+void start_gui_ctx(void) {
+    g_ctx.dir = GD_VERTICAL;
+
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        g_ctx.mouse_hold_time += GetFrameTime();
+        g_ctx.mouse_p = GetMousePosition();
+    } else {
+        g_ctx.mouse_hold_time = 0;
+    }
+
+    process_toast_arr();
+}
+
 void finish_gui_ctx(void) {
     if (g_ctx.cur_id.size > 0) {
         // Log...
@@ -849,4 +932,6 @@ void finish_gui_ctx(void) {
         draw_dropdown_menu();
         g_ctx.active_dropdown.draw_dropdown = false;
     }
+
+    draw_toast_arr();
 }

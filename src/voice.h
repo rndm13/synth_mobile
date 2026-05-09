@@ -51,7 +51,7 @@ typedef struct OscVoice {
 
     // Private data for oscillator
     int wave_idx;
-    float env;
+    float last_env;
 } OscVoice;
 
 typedef struct OscVoiceArr {

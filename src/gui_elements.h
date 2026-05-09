@@ -94,6 +94,15 @@
 #define DROPDOWN_ITEM_SIZE_H        30
 #define DROPDOWN_ITEM_PAD           5
 
+#define TOAST_INNER_COLOR           LIGHTGRAY
+#define TOAST_LINE_COLOR            BLACK
+#define TOAST_LINE_THICKNESS        1
+#define TOAST_INITIAL_TTL           5.0f
+
+#define TOAST_SIZE_W                GUI_GAP * 2 + 350
+#define TOAST_SIZE_H                GUI_GAP * 2 + 40
+#define MAX_TOAST_COUNT             5
+
 #define FONT_SIZE                   20
 #define MAX_TOUCH_POINTS            10
 #define KNOB_RADIUS                 25
@@ -114,6 +123,10 @@ typedef enum GuiDirection {
 
 void start_gui_ctx(void);
 void finish_gui_ctx(void);
+
+void push_gui_id_i(int id);
+void push_gui_id(const char* label);
+void pop_gui_id();
 
 void set_gui_dir(GuiDirection dir);
 
@@ -139,4 +152,4 @@ bool draw_dropdown(
     const char **opt_arr, int opt_count,
     int *active_idx);
 
-bool add_toast(const char* label, float timeout);
+void add_toast(const char* fmt, ...);

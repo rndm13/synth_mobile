@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <ftw.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -11,15 +12,17 @@
 #include "raylib.h"
 #include "raymath.h"
 
+#include "ini.h"
+
 #include "utils.h"
 #include "settings.h"
 #include "gui_elements.h"
 #include "voice.h"
 #include "fft.h"
-
 #include "env.h"
 #include "osc.h"
 #include "filter.h"
+
 
 typedef struct Key {
     Vector2 pos;
@@ -98,15 +101,15 @@ int add_program_entry(
         const int typeflag, struct FTW *pathinfo) {
     const char* filename = filepath + pathinfo->base;
 
-    const char* extension_substr = strstr(filename, PROGRAM_EXTENSION);
-    if (extension_substr == NULL) {
-        return 0;
-    }
-
-    size_t program_len = MIN(extension_substr - filename, PROGRAM_NAME_CAPACITY);
+    // const char* extension_substr = strstr(filename, PROGRAM_EXTENSION);
+    // if (extension_substr == NULL) {
+    //     return 0;
+    // }
+    //
+    // size_t program_len = MIN(extension_substr - filename, PROGRAM_NAME_CAPACITY);
 
     snprintf(g_s.program_selection.filepath_arr[g_s.program_selection.program_count], FILEPATH_CAPACITY, "%s", filepath);
-    snprintf(g_s.program_selection.program_name_arr[g_s.program_selection.program_count], program_len, "%s", filename);
+    snprintf(g_s.program_selection.program_name_arr[g_s.program_selection.program_count], PROGRAM_NAME_CAPACITY, "%s", filename);
 
     g_s.program_selection.program_count++;
 
@@ -119,16 +122,16 @@ void init_program_selection() {
     g_s.program_selection.program_count = 0;
     g_s.program_selection.selected_program_idx = 0;
 
-    e = nftw(PROGRAM_PATH, add_program_entry, 10, FTW_PHYS);
+    e = nftw(".", add_program_entry, 10, 0);
     if (e != 0) {
-        // Log
+        add_toast("Failed to search for existing programs: %s", strerror(errno));
+    } else {
+        add_toast("Successfully loaded existing programs");
     }
 }
 
 void add_program() {
     char filepath[FILEPATH_CAPACITY] = {0};
-
-    memset(filepath, 0, ARRAY_SIZE(filepath));
 
     snprintf(
         filepath, FILEPATH_CAPACITY,
@@ -144,26 +147,312 @@ void add_program() {
     g_s.program_selection.program_count++;
 }
 
-void save_program() {
-    const char* current_program = g_s.program_selection.program_name_arr[g_s.program_selection.selected_program_idx];
+static int write_ini_value_s(FILE* file, const char* value, const char* section, const char* name) {
+    int e = 0;
 
-    if (0 != strncmp(current_program, g_s.program_name, PROGRAM_NAME_CAPACITY)) {
-        add_program();
+    e = fprintf(file, "[%s]\n%s = %s\n", section, name, value);
+    if (e < 0) {
+        return errno;
     }
+
+    return 0;
 }
 
-void open_program() {
-    uint32_t seed = 0;
+static int write_ini_value_i(FILE* file, int value, const char* section, const char* name) {
+    int e = 0;
 
-    snprintf(
-        g_s.program_name, PROGRAM_NAME_CAPACITY,
-        "%s", g_s.program_selection.program_name_arr[g_s.program_selection.selected_program_idx]);
-
-    for (int i = 0; i < ARRAY_SIZE(g_s.program_name); i++) {
-        seed += g_s.program_name[i] * i;
+    e = fprintf(file, "[%s]\n%s = %d\n", section, name, value);
+    if (e < 0) {
+        return errno;
     }
 
-    srand(seed);
+    return 0;
+}
+
+static int write_ini_value_f(FILE* file, float value, const char* section, const char* name) {
+    int e = 0;
+
+    e = fprintf(file, "[%s]\n%s = %f\n", section, name, value);
+    if (e < 0) {
+        return errno;
+    }
+
+    return 0;
+}
+
+static int write_ini_file() {
+    char cur_section[INI_SECTION_CAPACITY] = {};
+    char filepath[FILEPATH_CAPACITY] = {};
+    int e = 0;
+    FILE* file = NULL;
+    OscParams *oparams = NULL;
+    Env *eparams = NULL;
+    FilterParams *fparams = NULL;
+    SynthParams *sparams = NULL;
+
+    snprintf(
+            filepath, FILEPATH_CAPACITY, "%s.ini",
+            g_s.program_selection.program_name_arr[g_s.program_selection.selected_program_idx]);
+
+    file = fopen(filepath, "w");
+
+    if (NULL == file) {
+        return errno;
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "osc", i);
+
+        oparams = &g_s.osc_arr[i].params;
+
+        e = write_ini_value_i(file, oparams->cents, cur_section, "cents");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_i(file, oparams->detune, cur_section, "detune");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_i(file, oparams->unison, cur_section, "unison");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_i(file, oparams->semi, cur_section, "semi");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, oparams->volume, cur_section, "volume");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_i(file, oparams->type, cur_section, "type");
+        if (e != 0) {
+            goto close_file;
+        }
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "env", i);
+
+        eparams = &g_s.env_arr[i];
+
+        e = write_ini_value_f(file, eparams->attack, cur_section, "attack");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, eparams->decay, cur_section, "decay");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, eparams->sustain, cur_section, "sustain");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, eparams->release, cur_section, "release");
+        if (e != 0) {
+            goto close_file;
+        }
+    }
+
+    {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s%d", "flt", 0);
+
+        fparams = &g_s.flt.params;
+
+        e = write_ini_value_i(file, fparams->type, cur_section, "type");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, fparams->cutoff, cur_section, "cutoff");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, fparams->gain, cur_section, "gain");
+        if (e != 0) {
+            goto close_file;
+        }
+    }
+
+    {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "synth");
+
+        sparams = &g_s.params;
+
+        e = write_ini_value_f(file, sparams->amp, cur_section, "amp");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, sparams->pan, cur_section, "pan");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_s(file, g_s.program_name, cur_section, "name");
+        if (e != 0) {
+            goto close_file;
+        }
+    }
+
+close_file:
+    fclose(file);
+    return e;
+}
+
+void save_program() {
+    const char* current_program = NULL;
+    int e = 0;
+    bool found = false;
+
+    for (size_t i = 0; i < g_s.program_selection.program_count; i++) {
+        current_program = g_s.program_selection.program_name_arr[i];
+        if (0 == strncmp(current_program, g_s.program_name, PROGRAM_NAME_CAPACITY)) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        add_program();
+    }
+
+    pthread_rwlock_rdlock(&g_s.osc_arr[0].params.rw);
+    pthread_rwlock_rdlock(&g_s.osc_arr[1].params.rw);
+    pthread_rwlock_rdlock(&g_s.env_arr[0].rw);
+    pthread_rwlock_rdlock(&g_s.env_arr[1].rw);
+    pthread_rwlock_rdlock(&g_s.flt.params.rw);
+    pthread_rwlock_rdlock(&g_s.params.rw);
+
+    e = write_ini_file();
+    if (e != 0) {
+        add_toast("Failed writing to INI file: %s", strerror(errno));
+    }
+
+    pthread_rwlock_unlock(&g_s.osc_arr[0].params.rw);
+    pthread_rwlock_unlock(&g_s.osc_arr[1].params.rw);
+    pthread_rwlock_unlock(&g_s.env_arr[0].rw);
+    pthread_rwlock_unlock(&g_s.env_arr[1].rw);
+    pthread_rwlock_unlock(&g_s.flt.params.rw);
+    pthread_rwlock_unlock(&g_s.params.rw);
+}
+
+#define MATCH_S(var, exp_section, exp_name, section, name, value)                       \
+    do {                                                                                \
+        if (strcmp((exp_section), (section)) == 0 && strcmp((exp_name), (name)) == 0) { \
+            snprintf(var, sizeof(var), "%s", value);                                    \
+        }                                                                               \
+    } while (0);
+
+#define MATCH_I(var, exp_section, exp_name, section, name, value)                       \
+    do {                                                                                \
+        if (strcmp((exp_section), (section)) == 0 && strcmp((exp_name), (name)) == 0) { \
+            (var) = atoi(value);                                                        \
+        }                                                                               \
+    } while (0);
+
+#define MATCH_F(var, exp_section, exp_name, section, name, value)                       \
+    do {                                                                                \
+        if (strcmp((exp_section), (section)) == 0 && strcmp((exp_name), (name)) == 0) { \
+            (var) = atof(value);                                                        \
+        }                                                                               \
+    } while (0);
+
+static int read_ini_value(
+    void* user, const char* section, const char* name,
+    const char* value) {
+    char cur_section[INI_SECTION_CAPACITY] = {};
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.osc_arr); i++) {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "osc", i);
+
+        OscParams *params = &g_s.osc_arr[i].params;
+
+        MATCH_I(params->cents, cur_section, "cents", section, name, value);
+        MATCH_I(params->detune, cur_section, "detune", section, name, value);
+        MATCH_I(params->unison, cur_section, "unison", section, name, value);
+        MATCH_I(params->semi, cur_section, "semi", section, name, value);
+        MATCH_F(params->volume, cur_section, "volume", section, name, value);
+        MATCH_I(params->type, cur_section, "type", section, name, value);
+        params->cents_mul = calc_cents_mul(params->cents);
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(g_s.env_arr); i++) {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "env", i);
+
+        Env *params = &g_s.env_arr[i];
+
+        MATCH_F(params->attack, cur_section, "attack", section, name, value);
+        MATCH_F(params->decay, cur_section, "decay", section, name, value);
+        MATCH_F(params->sustain, cur_section, "sustain", section, name, value);
+        MATCH_F(params->release, cur_section, "release", section, name, value);
+    }
+
+    {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s%d", "flt", 0);
+
+        FilterParams *params = &g_s.flt.params;
+
+        MATCH_I(params->type, cur_section, "type", section, name, value);
+        MATCH_F(params->cutoff, cur_section, "cutoff", section, name, value);
+        MATCH_F(params->gain, cur_section, "gain", section, name, value);
+    }
+
+    {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "synth");
+
+        SynthParams *params = &g_s.params;
+
+        MATCH_F(params->amp, cur_section, "amp", section, name, value);
+        MATCH_F(params->pan, cur_section, "pan", section, name, value);
+        MATCH_S(g_s.program_name, cur_section, "name", section, name, value);
+    }
+
+    return 1;
+}
+
+#undef MATCH_I
+#undef MATCH_F
+
+void open_program() {
+    int e = 0;
+    pthread_rwlock_wrlock(&g_s.osc_arr[0].params.rw);
+    pthread_rwlock_wrlock(&g_s.osc_arr[1].params.rw);
+    pthread_rwlock_wrlock(&g_s.env_arr[0].rw);
+    pthread_rwlock_wrlock(&g_s.env_arr[1].rw);
+    pthread_rwlock_wrlock(&g_s.flt.params.rw);
+    pthread_rwlock_wrlock(&g_s.params.rw);
+
+    e = ini_parse(g_s.program_selection.filepath_arr[g_s.program_selection.selected_program_idx], read_ini_value, NULL);
+    if (e != 0) {
+        add_toast("Failed parsing INI file: %d", e);
+    }
+
+    prepare_osc_display_buffer(&g_s.osc_arr[0]);
+    prepare_osc_display_buffer(&g_s.osc_arr[1]);
+    prepare_filter(&g_s.flt);
+
+    pthread_rwlock_unlock(&g_s.osc_arr[0].params.rw);
+    pthread_rwlock_unlock(&g_s.osc_arr[1].params.rw);
+    pthread_rwlock_unlock(&g_s.env_arr[0].rw);
+    pthread_rwlock_unlock(&g_s.env_arr[1].rw);
+    pthread_rwlock_unlock(&g_s.flt.params.rw);
+    pthread_rwlock_unlock(&g_s.params.rw);
+
+    add_toast("Successfully opened program");
+}
+
+void randomize_program() {
+    srand(time(NULL));
 
 #define RAND_RANGE(min, max) ((rand() % ((max) - (min))) + (min))
 #define RAND_RANGEF(min, max) (RAND_RANGE((int)((min) * 100), (int)((max) * 100)) / 100.0f)
@@ -325,9 +614,7 @@ void init_synth() {
 }
 
 void deinit_synth() {
-    int e = 0;
-    // TODO: Log
-    e = pthread_rwlock_destroy(&g_s.params.rw);
+    pthread_rwlock_destroy(&g_s.params.rw);
 
     voice_arr_deinit(&g_s.voice_arr);
 
@@ -443,17 +730,21 @@ void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float wave_
     float vel_mul = voice.velocity / MAX_VELOCITY;
     float time = GetTime() - osc_voice->start_time;
     float release_time = osc_voice->release_time - osc_voice->start_time;
+    float env_val = 0;
 
     for (int j = 0; j < n; j++) {
         float wave_length = SAMPLE_RATE / wave_freq;
         float dt = j / (float)SAMPLE_RATE;
         float kernel = calc_osc_value(osc->params.type, osc_voice->wave_idx, wave_length);
 
-        osc_voice->env = calc_env_value(
+        env_val = calc_env_value(
                 time + dt, osc_voice->released,
-                release_time, osc_voice->env, env);
+                release_time, osc_voice->last_env, env);
+        if (!osc_voice->released || FloatEquals(env_val, 0)) {
+            osc_voice->last_env = env_val;
+        }
 
-        buffer[j] += osc->params.volume * osc_voice->env * vel_mul * kernel;
+        buffer[j] += osc->params.volume * env_val * vel_mul * kernel;
         osc_voice->wave_idx++;
         if (osc_voice->wave_idx >= wave_length) {
             osc_voice->wave_idx = 0;
@@ -463,8 +754,13 @@ void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float wave_
 
 void update_osc(Osc* osc, Env* env, float* buffer, size_t n) {
     OscVoiceArr *ova = &osc->voice_arr;
+    OscVoice *osc_voice = NULL;
+    Voice voice = {};
+    int key_idx = 0;
+    float wave_freq = 0;
+    int e = 0;
 
-    int e = pthread_rwlock_rdlock(&osc->params.rw);
+    e = pthread_rwlock_rdlock(&osc->params.rw);
     if (e != 0) {
         // TODO: Log
         return;
@@ -481,17 +777,17 @@ void update_osc(Osc* osc, Env* env, float* buffer, size_t n) {
     }
 
     for (int v = 0; v < ova->osc_voice_count; v++) {
-        OscVoice *osc_voice = &ova->osc_voice_arr[v];
-        Voice voice = osc_voice->voice;
+        osc_voice = &ova->osc_voice_arr[v];
+        voice = osc_voice->voice;
 
-        int key_idx = voice.key_idx + osc->params.semi;
+        key_idx = voice.key_idx + osc->params.semi;
         if (key_idx < 0) {
             key_idx = 0;
         } else if (key_idx > KEY_COUNT) {
             key_idx = KEY_COUNT;
         }
 
-        float wave_freq = g_s.key_arr[key_idx].freq * osc->params.cents_mul * osc_voice->detune_mul;
+        wave_freq = g_s.key_arr[key_idx].freq * osc->params.cents_mul * osc_voice->detune_mul;
         update_osc_voice(osc, env, osc_voice, wave_freq, buffer, n);
     }
 
@@ -617,7 +913,7 @@ void draw_voice_arr() {
         float detune = osc->voice_arr.osc_voice_arr[i].detune_mul;
         float start_time = osc->voice_arr.osc_voice_arr[i].start_time;
         float release_time = osc->voice_arr.osc_voice_arr[i].release_time;
-        float env = osc->voice_arr.osc_voice_arr[i].env;
+        float env = osc->voice_arr.osc_voice_arr[i].last_env;
         DrawText(
                 TextFormat(
                     "key: %d, d: %.2f, t: %.2f, r: %.2f, env: %.2f",
@@ -709,7 +1005,10 @@ void draw_tab_osc(Vector2* cursor_p) {
         OscParams *params = &osc->params;
         int e = 0;
 
+        push_gui_id_i(i);
+
         set_gui_dir(GD_VERTICAL);
+
         if (draw_wave("Oscillator wave", &split_cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer), 0)) {
             e = pthread_rwlock_wrlock(&params->rw);
             if (e != 0) {
@@ -734,7 +1033,9 @@ void draw_tab_osc(Vector2* cursor_p) {
         cursor_p_r2.y += KNOB_SIZE_H + GUI_GAP;
 
         set_gui_dir(GD_HORIZONTAL);
+
         draw_knob_i("Semitones", &split_cursor_p, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
+
         bool c_cents = draw_knob_i("Cents", &split_cursor_p, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
         if (c_cents) {
             e = pthread_rwlock_wrlock(&params->rw);
@@ -754,9 +1055,12 @@ void draw_tab_osc(Vector2* cursor_p) {
 
         split_cursor_p = cursor_p_r2;
         draw_knob_i("Unison", &split_cursor_p, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, &params->rw);
+
         draw_knob_i("Detune", &split_cursor_p, &params->detune, OSC_DETUNE_MIN, OSC_DETUNE_MAX, &params->rw);
 
         draw_knob("Volume", &split_cursor_p, &params->volume, 0.0f, 1.0f, &params->rw);
+
+        pop_gui_id();
     }
 }
 
@@ -767,12 +1071,16 @@ void draw_tab_env(Vector2* cursor_p) {
         Env *env = &g_s.env_arr[i];
         Vector2 split_cursor_p = {cursor_p->x + i * (wave_s.x + GUI_GAP), cursor_p->y};
 
+        push_gui_id_i(i);
+
         set_gui_dir(GD_HORIZONTAL);
         // TODO: Env wave
         draw_knob("Attack", &split_cursor_p, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
         draw_knob("Decay", &split_cursor_p, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
         draw_knob("Sustain", &split_cursor_p, &env->sustain, 0.0f, 1.0f, &env->rw);
         draw_knob("Release", &split_cursor_p, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
+
+        pop_gui_id();
     }
 }
 
@@ -914,6 +1222,10 @@ int main(void) {
 
     init_synth();
 
+#ifndef PLATFORM_ANDROID
+	ChangeDirectory("assets");
+#endif
+
     while (!WindowShouldClose()) {
         // Process
         process_ui();
@@ -929,6 +1241,10 @@ int main(void) {
             draw_fps();
         EndDrawing();
     }
+
+#ifndef PLATFORM_ANDROID
+	ChangeDirectory("..");
+#endif
 
     deinit_synth();
 

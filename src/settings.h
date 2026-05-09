@@ -43,7 +43,10 @@
 #define PROGRAM_COUNT_MAX     128
 #define FILEPATH_CAPACITY     128
 
-#define PROGRAM_PATH          "assets"
+#define PROGRAM_PATH          "assets/programs"
 #define PROGRAM_EXTENSION     ".ini"
+#define INI_SECTION_CAPACITY  20
+
+#define ERR_MSG_CAPACITY      256
 
 typedef struct timespec timespec_t;
