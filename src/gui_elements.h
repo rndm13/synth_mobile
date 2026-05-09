@@ -112,33 +112,31 @@ typedef enum GuiDirection {
     GD_HORIZONTAL
 } GuiDirection;
 
-void reset_gui_ctx(void);
+void start_gui_ctx(void);
 void finish_gui_ctx(void);
 
 void set_gui_dir(GuiDirection dir);
 
 bool draw_knob(const char* label, Vector2 *cursor, float *value, float min_value, float max_value, pthread_rwlock_t *rw);
 bool draw_knob_i(const char* label, Vector2 *cursor, int *value, int min_value, int max_value, pthread_rwlock_t *rw);
-bool draw_slider(Vector2 *cursor, Vector2 size, float *value, float min_value, float max_value, GuiScaling scale, pthread_rwlock_t *rw);
 
-bool draw_tab_menu(Vector2 *cursor, Vector2 size, const char **label_arr, int label_count, int *active_index);
-bool draw_wave(Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size, size_t off);
+bool draw_slider(const char* label, Vector2 *cursor, Vector2 size, float *value, float min_value, float max_value, GuiScaling scale, pthread_rwlock_t *rw);
+
+bool draw_tab_menu(const char* label, Vector2 *cursor, Vector2 size, const char **label_arr, int label_count, int *active_index);
+
+void end_tab_menu(void);
+
+bool draw_wave(const char* label, Vector2 *cursor, Vector2 size, float *buffer, size_t buf_size, size_t off);
+
 bool draw_button(const char* label, Vector2 *cursor);
+
 bool draw_toggle(const char* label, Vector2 *cursor, bool *v, pthread_rwlock_t *rw);
 
-bool draw_text_field(Vector2 *cursor, Vector2 size, char* v, size_t v_capacity);
+bool draw_text_field(const char* label, Vector2 *cursor, Vector2 size, char* v, size_t v_capacity);
 
-bool process_keyboard(int* c, int screen_w, int screen_h);
-void draw_keyboard(int screen_w, int screen_h);
+bool draw_dropdown(
+    const char* label, Vector2 *cursor,
+    const char **opt_arr, int opt_count,
+    int *active_idx);
 
-typedef struct DropdownData {
-    const char **opt_arr;
-    int opt_count;
-
-    int *active_idx;
-} DropdownData;
-
-bool draw_dropdown(const char* label, Vector2 *cursor, DropdownData *dropdown);
-
-bool process_dropdown_menu(Vector2 pos, DropdownData *dropdown);
-void draw_dropdown_menu();
+bool add_toast(const char* label, float timeout);

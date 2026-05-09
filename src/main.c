@@ -20,9 +20,6 @@
 #include "env.h"
 #include "osc.h"
 #include "filter.h"
-#include "ini.h"
-
-#define MIN(A, B) ((A) < (B) ? (A) : (B))
 
 typedef struct Key {
     Vector2 pos;
@@ -117,10 +114,15 @@ int add_program_entry(
 }
 
 void init_program_selection() {
+    int e = 0;
+
     g_s.program_selection.program_count = 0;
     g_s.program_selection.selected_program_idx = 0;
 
-    nftw(PROGRAM_EXTENSION, add_program_entry, 10, FTW_PHYS);
+    e = nftw(PROGRAM_PATH, add_program_entry, 10, FTW_PHYS);
+    if (e != 0) {
+        // Log
+    }
 }
 
 void add_program() {
@@ -158,7 +160,7 @@ void open_program() {
         "%s", g_s.program_selection.program_name_arr[g_s.program_selection.selected_program_idx]);
 
     for (int i = 0; i < ARRAY_SIZE(g_s.program_name); i++) {
-        seed += g_s.program_name[i];
+        seed += g_s.program_name[i] * i;
     }
 
     srand(seed);
@@ -199,6 +201,7 @@ void open_program() {
         FilterParams *params = &g_s.flt.params;
         pthread_rwlock_wrlock(&params->rw);
 
+        params->type = RAND_RANGE(0, FT_MAX);
         params->cutoff = RAND_RANGEF(FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
         params->gain = RAND_RANGEF(FLT_GAIN_MIN, FLT_GAIN_MAX);
 
@@ -206,8 +209,6 @@ void open_program() {
 
         prepare_filter(&g_s.flt);
     }
-
-    g_s.cur_octave = 3;
 
 #undef RAND_RANGE
 #undef RAND_RANGEF
@@ -595,10 +596,10 @@ void audio_callback(void *_buffer, unsigned int frames) {
 void draw_profiling_stats() {
     DrawText(
             TextFormat(
-                "osc0: %d\n"
-                "osc1: %d\n"
-                "flt0: %d\n"
-                "total: %d\n",
+                "osc0: %dms\n"
+                "osc1: %dms\n"
+                "flt0: %dms\n"
+                "total: %dms\n",
                 NS_TO_MS(g_s.prof.osc_time[0].tv_nsec),
                 NS_TO_MS(g_s.prof.osc_time[1].tv_nsec),
                 NS_TO_MS(g_s.prof.flt_time.tv_nsec),
@@ -666,22 +667,19 @@ void draw_fps() {
 void draw_tab_synth(Vector2* cursor_p) {
     Vector2 tfield_s = { TEXT_FIELD_SIZE_W, TEXT_FIELD_SIZE_H };
 
-    const char* opt_arr[PROGRAM_COUNT_MAX] = {};
-    DropdownData dd = {
-        .active_idx = &g_s.program_selection.selected_program_idx,
-        .opt_arr = opt_arr,
-        .opt_count = g_s.program_selection.program_count,
-    };
-
+    const char* program_opt_arr[PROGRAM_COUNT_MAX] = {};
     for (size_t i = 0; i < g_s.program_selection.program_count; i++) {
-        opt_arr[i] = g_s.program_selection.program_name_arr[i];
+        program_opt_arr[i] = g_s.program_selection.program_name_arr[i];
     }
 
     Vector2 cursor_p_r1 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
-    draw_text_field(&cursor_p_r1, tfield_s, g_s.program_name, PROGRAM_NAME_CAPACITY);
+    draw_text_field("Program name", &cursor_p_r1, tfield_s, g_s.program_name, PROGRAM_NAME_CAPACITY);
 
-    if (draw_dropdown("Open", &cursor_p_r1, &dd)) {
+    if (draw_dropdown(
+                "Open", &cursor_p_r1,
+                program_opt_arr, g_s.program_selection.program_count,
+                &g_s.program_selection.selected_program_idx)) {
         open_program();
     }
 
@@ -712,7 +710,7 @@ void draw_tab_osc(Vector2* cursor_p) {
         int e = 0;
 
         set_gui_dir(GD_VERTICAL);
-        if (draw_wave(&split_cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer), 0)) {
+        if (draw_wave("Oscillator wave", &split_cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer), 0)) {
             e = pthread_rwlock_wrlock(&params->rw);
             if (e != 0) {
                 // TODO: Log
@@ -786,7 +784,7 @@ void draw_tab_filter(Vector2* cursor_p) {
     Vector2 slider_s = {wave_s.x, SLIDER_SIZE_H};
 
     set_gui_dir(GD_VERTICAL);
-    changed_type = draw_wave(cursor_p, wave_s, g_s.flt.disp_buffer, DISPLAY_BUFFER_SIZE, 0);
+    changed_type = draw_wave("Filter frequency response", cursor_p, wave_s, g_s.flt.disp_buffer, DISPLAY_BUFFER_SIZE, 0);
     if (changed_type) {
         changed |= true;
 
@@ -806,7 +804,7 @@ void draw_tab_filter(Vector2* cursor_p) {
         }
     }
 
-    changed |= draw_slider(cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, &params->rw);
+    changed |= draw_slider("Cutoff", cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, &params->rw);
 
     set_gui_dir(GD_HORIZONTAL);
     changed |= draw_knob("Resonance", cursor_p, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
@@ -833,9 +831,9 @@ void draw_tab_keys(Vector2* cursor_p) {
 
     set_gui_dir(GD_VERTICAL);
     if (g_s.show_fft) {
-        clicked = draw_wave(cursor_p, wave_s, g_s.buffer_fft_r, ARRAY_SIZE(g_s.buffer_fft_r) / 2, 0);
+        clicked = draw_wave("FFT", cursor_p, wave_s, g_s.buffer_fft_r, ARRAY_SIZE(g_s.buffer_fft_r) / 2, 0);
     } else {
-        clicked = draw_wave(cursor_p, wave_s, g_s.buffer_fft, ARRAY_SIZE(g_s.buffer_fft), g_s.buffer_fft_idx);
+        clicked = draw_wave("Wave", cursor_p, wave_s, g_s.buffer_fft, ARRAY_SIZE(g_s.buffer_fft), g_s.buffer_fft_idx);
     }
 
     if (clicked) {
@@ -846,7 +844,7 @@ void draw_tab_keys(Vector2* cursor_p) {
 
     cursor_p->x = g_s.screen_w  - KNOB_SIZE_W;
     if (draw_knob_i("Octave", cursor_p, &g_s.cur_octave, 0, OCTAVE_COUNT - 2, NULL)) {
-        init_keys();
+        init_key_positions();
     }
 
     if (g_s.show_debug) {
@@ -883,10 +881,11 @@ void draw_ui() {
         TAB_X(X_STR_ARR)
     };
 
-    reset_gui_ctx();
+    start_gui_ctx();
 
     set_gui_dir(GD_VERTICAL);
-    draw_tab_menu(&cursor_p, tab_s, tab_l, ARRAY_SIZE(tab_l), (int*)&g_s.cur_tab);
+
+    draw_tab_menu("Tabs", &cursor_p, tab_s, tab_l, ARRAY_SIZE(tab_l), (int*)&g_s.cur_tab);
     switch (g_s.cur_tab) {
     case TAB_SYNTH:
         draw_tab_synth(&cursor_p);
@@ -904,6 +903,7 @@ void draw_ui() {
         draw_tab_keys(&cursor_p);
         break;
     }
+    end_tab_menu();
 
     finish_gui_ctx();
 }

@@ -9,6 +9,7 @@
 #define S_TO_NS(X)     ((X) * NS_IN_S)
 
 #define ARRAY_SIZE(X)  (sizeof(X) / sizeof(*(X)))
+#define MIN(A, B)      ((A) < (B) ? (A) : (B))
 
 #define X_ENUM(v, s) \
     v,
