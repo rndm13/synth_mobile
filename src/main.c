@@ -101,15 +101,15 @@ int add_program_entry(
         const int typeflag, struct FTW *pathinfo) {
     const char* filename = filepath + pathinfo->base;
 
-    // const char* extension_substr = strstr(filename, PROGRAM_EXTENSION);
-    // if (extension_substr == NULL) {
-    //     return 0;
-    // }
-    //
-    // size_t program_len = MIN(extension_substr - filename, PROGRAM_NAME_CAPACITY);
+    const char* extension_substr = strstr(filename, PROGRAM_EXTENSION);
+    if (extension_substr == NULL) {
+        return 0;
+    }
+
+    size_t program_len = MIN(extension_substr - filename, PROGRAM_NAME_CAPACITY);
 
     snprintf(g_s.program_selection.filepath_arr[g_s.program_selection.program_count], FILEPATH_CAPACITY, "%s", filepath);
-    snprintf(g_s.program_selection.program_name_arr[g_s.program_selection.program_count], PROGRAM_NAME_CAPACITY, "%s", filename);
+    snprintf(g_s.program_selection.program_name_arr[g_s.program_selection.program_count], program_len + 1, "%s", filename);
 
     g_s.program_selection.program_count++;
 
@@ -122,7 +122,7 @@ void init_program_selection() {
     g_s.program_selection.program_count = 0;
     g_s.program_selection.selected_program_idx = 0;
 
-    e = nftw(".", add_program_entry, 10, 0);
+    e = nftw(ANDROID_APP_DIR_PATH, add_program_entry, 10, 0);
     if (e != 0) {
         add_toast("Failed to search for existing programs: %s", strerror(errno));
     } else {
@@ -144,6 +144,7 @@ void add_program() {
         g_s.program_selection.program_name_arr[g_s.program_selection.program_count],
         PROGRAM_NAME_CAPACITY, "%s", g_s.program_name);
 
+    g_s.program_selection.selected_program_idx = g_s.program_selection.program_count;
     g_s.program_selection.program_count++;
 }
 
@@ -182,17 +183,13 @@ static int write_ini_value_f(FILE* file, float value, const char* section, const
 
 static int write_ini_file() {
     char cur_section[INI_SECTION_CAPACITY] = {};
-    char filepath[FILEPATH_CAPACITY] = {};
+    const char* filepath = g_s.program_selection.filepath_arr[g_s.program_selection.selected_program_idx];
     int e = 0;
     FILE* file = NULL;
     OscParams *oparams = NULL;
     Env *eparams = NULL;
     FilterParams *fparams = NULL;
     SynthParams *sparams = NULL;
-
-    snprintf(
-            filepath, FILEPATH_CAPACITY, "%s.ini",
-            g_s.program_selection.program_name_arr[g_s.program_selection.selected_program_idx]);
 
     file = fopen(filepath, "w");
 
@@ -207,31 +204,37 @@ static int write_ini_file() {
 
         e = write_ini_value_i(file, oparams->cents, cur_section, "cents");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->detune, cur_section, "detune");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->unison, cur_section, "unison");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->semi, cur_section, "semi");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, oparams->volume, cur_section, "volume");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->type, cur_section, "type");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
     }
@@ -243,21 +246,25 @@ static int write_ini_file() {
 
         e = write_ini_value_f(file, eparams->attack, cur_section, "attack");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, eparams->decay, cur_section, "decay");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, eparams->sustain, cur_section, "sustain");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, eparams->release, cur_section, "release");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
     }
@@ -269,16 +276,19 @@ static int write_ini_file() {
 
         e = write_ini_value_i(file, fparams->type, cur_section, "type");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, fparams->cutoff, cur_section, "cutoff");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, fparams->gain, cur_section, "gain");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
     }
@@ -290,16 +300,19 @@ static int write_ini_file() {
 
         e = write_ini_value_f(file, sparams->amp, cur_section, "amp");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, sparams->pan, cur_section, "pan");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_s(file, g_s.program_name, cur_section, "name");
         if (e != 0) {
+            e = errno;
             goto close_file;
         }
     }
@@ -317,6 +330,7 @@ void save_program() {
     for (size_t i = 0; i < g_s.program_selection.program_count; i++) {
         current_program = g_s.program_selection.program_name_arr[i];
         if (0 == strncmp(current_program, g_s.program_name, PROGRAM_NAME_CAPACITY)) {
+            g_s.program_selection.selected_program_idx = i;
             found = true;
             break;
         }
@@ -335,7 +349,10 @@ void save_program() {
 
     e = write_ini_file();
     if (e != 0) {
-        add_toast("Failed writing to INI file: %s", strerror(errno));
+        add_toast(
+                "Failed writing: %s\n%s",
+                strerror(errno),
+                g_s.program_selection.filepath_arr[g_s.program_selection.selected_program_idx]);
     }
 
     pthread_rwlock_unlock(&g_s.osc_arr[0].params.rw);
@@ -437,16 +454,16 @@ void open_program() {
         add_toast("Failed parsing INI file: %d", e);
     }
 
-    prepare_osc_display_buffer(&g_s.osc_arr[0]);
-    prepare_osc_display_buffer(&g_s.osc_arr[1]);
-    prepare_filter(&g_s.flt);
-
     pthread_rwlock_unlock(&g_s.osc_arr[0].params.rw);
     pthread_rwlock_unlock(&g_s.osc_arr[1].params.rw);
     pthread_rwlock_unlock(&g_s.env_arr[0].rw);
     pthread_rwlock_unlock(&g_s.env_arr[1].rw);
     pthread_rwlock_unlock(&g_s.flt.params.rw);
     pthread_rwlock_unlock(&g_s.params.rw);
+
+    prepare_osc_display_buffer(&g_s.osc_arr[0]);
+    prepare_osc_display_buffer(&g_s.osc_arr[1]);
+    prepare_filter(&g_s.flt);
 
     add_toast("Successfully opened program");
 }

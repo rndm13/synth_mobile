@@ -134,5 +134,7 @@ mv -f synth.final.apk synth.apk
 apksigner sign  --ks android/raylib.keystore --out my-app-release.apk --ks-pass pass:raylib synth.apk
 mv my-app-release.apk synth.apk
 
+cp synth.apk apk/
+
 # Install to device or emulator
 android/sdk/platform-tools/adb install -r synth.apk

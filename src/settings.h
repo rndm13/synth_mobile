@@ -41,9 +41,11 @@
 #define PROGRAM_NAME_CAPACITY 16
 #define PROGRAM_NAME_INIT     "INIT SYNTH"
 #define PROGRAM_COUNT_MAX     128
-#define FILEPATH_CAPACITY     128
+#define FILEPATH_CAPACITY     512
 
-#define PROGRAM_PATH          "assets/programs"
+#define PROGRAM_MAX_SIZE      20000
+#define ANDROID_APP_DIR_PATH  "/storage/emulated/0/Android/data/com.raylib.synth/files"
+#define PROGRAM_PATH          ANDROID_APP_DIR_PATH
 #define PROGRAM_EXTENSION     ".ini"
 #define INI_SECTION_CAPACITY  20
 
