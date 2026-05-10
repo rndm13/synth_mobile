@@ -23,11 +23,6 @@ void prepare_filter_params(Filter* flt) {
         return;
     }
 
-    for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
-        flt->x[i] = 0;
-        flt->y[i] = 0;
-    }
-
     // double V = powf(10, fabs(params->gain) / 20);
     double K = tan(PI * params->cutoff / (double)FLT_OVERSAMPLED_RATE);
 
