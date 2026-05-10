@@ -68,6 +68,9 @@ int init_program_selection(const char* dirpath, ProgramSelection* ps) {
     g_ps->selected_program_idx = 0;
 
     e = nftw(dirpath, add_program_entry, 10, 0);
+    if (e < 0) {
+        e = errno;
+    }
 
     g_ps = NULL;
 
@@ -365,7 +368,7 @@ int open_program(Synth *s, const ProgramSelection* ps) {
     pthread_rwlock_wrlock(&s->flt.params.rw);
     pthread_rwlock_wrlock(&s->params.rw);
 
-    e = ini_parse(ps->filepath_arr[ps->selected_program_idx], read_ini_value, NULL);
+    e = ini_parse(ps->filepath_arr[ps->selected_program_idx], read_ini_value, s);
 
     pthread_rwlock_unlock(&s->osc_arr[0].params.rw);
     pthread_rwlock_unlock(&s->osc_arr[1].params.rw);
