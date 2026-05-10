@@ -27,6 +27,7 @@ typedef struct ToastData {
     Rectangle rec;
     char msg[ERR_MSG_CAPACITY];
 
+    Vector2 drag_start_pos;
     float ttl;
     float time_alive;
 } ToastData;
@@ -58,7 +59,7 @@ typedef struct GuiContext {
 static GuiContext g_ctx;
 
 bool mouse_clicked(void) {
-    bool mouse_clicked = 0 < g_ctx.mouse_hold_time && g_ctx.mouse_hold_time <= CLICK_MAX_TIME_S;
+    bool mouse_clicked = 0 < g_ctx.mouse_hold_time && g_ctx.mouse_hold_time <= MAX_CLICK_TIME_S;
     return mouse_clicked;
 }
 
@@ -709,9 +710,25 @@ static void process_toast_arr(void) {
         GUI_GAP
     };
 
+    Vector2 mouse_pos = GetMousePosition();
     for (size_t i = 0; i < g_ctx.toast_count; i++) {
         Vector2 pos = {g_ctx.toast_arr[i].rec.x, g_ctx.toast_arr[i].rec.y};
         Vector2 target_pos = cursor;
+
+        bool hovered = CheckCollisionPointRec(mouse_pos, g_ctx.toast_arr[i].rec);
+        bool dragged = IsMouseButtonDown(MOUSE_BUTTON_LEFT) && hovered;
+        if (dragged && g_ctx.mouse_hold_time < MAX_CLICK_TIME_S) {
+            g_ctx.toast_arr[i].drag_start_pos = mouse_pos;
+        }
+
+        if (dragged) {
+            target_pos.x += mouse_pos.x - g_ctx.toast_arr[i].drag_start_pos.x;
+        }
+
+        if (g_ctx.toast_arr[i].drag_start_pos.x - mouse_pos.x > TOAST_MAX_DRAG_X) {
+            g_ctx.toast_arr[i].time_alive += g_ctx.toast_arr[i].ttl;
+        }
+
         if (g_ctx.toast_arr[i].ttl <= g_ctx.toast_arr[i].time_alive) {
             target_pos.x = -g_ctx.toast_arr[i].rec.width;
         }

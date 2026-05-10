@@ -101,6 +101,7 @@
 #define TOAST_LINE_THICKNESS        1
 #define TOAST_INITIAL_TTL           5.0f
 #define TOAST_SPEED                 1000
+#define TOAST_MAX_DRAG_X            100
 
 #define MAX_TOAST_COUNT             5
 
@@ -110,7 +111,7 @@
 #define KNOB_SIZE_W                 (2 * KNOB_RADIUS + GUI_GAP)
 #define KNOB_SIZE_H                 (2 * FONT_SIZE + 2 * KNOB_RADIUS + 3 * GUI_GAP)
 
-#define CLICK_MAX_TIME_S            0.1
+#define MAX_CLICK_TIME_S            0.1
 
 typedef enum GuiScaling {
     GS_LINEAR,
