@@ -1,5 +1,6 @@
 #include "synth.h"
 
+#include "src/settings.h"
 #include "stdlib.h"
 #include "raymath.h"
 
@@ -26,6 +27,13 @@ void init_synth(Synth* s) {
 
     init_filter(&s->flt);
 
+    s->distortion.wet_dry_ratio = 0.0f;
+    s->distortion.gain = DISTORTION_GAIN_MIN;
+    e = pthread_rwlock_init(&s->distortion.rw, NULL);
+    if (e != 0) {
+        return;
+    }
+
     for (int i = 0; i < ARRAY_SIZE(s->key_freq_arr); i++) {
         s->key_freq_arr[i] = powf(2.0f, (float)(i - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
     }
@@ -45,6 +53,8 @@ void deinit_synth(Synth* s) {
     }
 
     deinit_filter(&s->flt);
+
+    pthread_rwlock_destroy(&s->distortion.rw);
 }
 
 void synth_add_voice(Synth* s, Voice new_voice, float time) {
@@ -159,6 +169,38 @@ timespec_t duration_from(timespec_t start_time) {
     return end_time;
 }
 
+void update_distortion(Distortion* d, float* buffer, size_t n) {
+    float wet = 0.0f;
+
+    int e = pthread_rwlock_rdlock(&d->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    if (d->wet_dry_ratio == 0) {
+        goto unlock;
+    }
+
+    for (size_t i = 0; i < n; i++) {
+         wet = tanh(buffer[i] * d->gain);
+         buffer[i] =
+             buffer[i] * (1 - d->wet_dry_ratio) +
+             wet * d->wet_dry_ratio;
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        buffer[i] = tanh(buffer[i]);
+    }
+
+unlock:
+    e = pthread_rwlock_unlock(&d->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+}
+
 void update_synth_amp(Synth* s, float* buffer, size_t n) {
     int e = pthread_rwlock_rdlock(&s->params.rw);
     if (e != 0) {
@@ -198,6 +240,9 @@ void update_synth(Synth* s, float global_time, float* buffer, size_t n) {
     timespec_get(&section_time, TIME_UTC);
     update_filter(&s->flt, buffer, n);
     s->prof.flt_time = duration_from(section_time);
+
+    timespec_get(&section_time, TIME_UTC);
+    update_distortion(&s->distortion, buffer, n);
 
     timespec_get(&section_time, TIME_UTC);
     update_synth_amp(s, buffer, n);

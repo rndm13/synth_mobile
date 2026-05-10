@@ -150,6 +150,8 @@ void pop_gui_id();
 
 void set_gui_dir(GuiDirection dir);
 
+void draw_text(const char* label, Vector2 *cursor);
+
 bool draw_knob(const char* label, Vector2 *cursor, float *value, float min_value, float max_value, pthread_rwlock_t *rw);
 bool draw_knob_i(const char* label, Vector2 *cursor, int *value, int min_value, int max_value, pthread_rwlock_t *rw);
 

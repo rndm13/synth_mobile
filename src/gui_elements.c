@@ -179,6 +179,13 @@ static float scale_percent(GuiScaling scale, float v, float min_v, float max_v) 
     }
 }
 
+void draw_text(const char* label, Vector2 *cursor) {
+    int label_w = MeasureText(label, FONT_SIZE);
+
+    DrawText(label, cursor->x, cursor->y, FONT_SIZE, TEXT_COLOR);
+
+    update_cursor(cursor, label_w + GUI_GAP, FONT_SIZE + GUI_GAP);
+}
 
 bool draw_knob(const char *label, Vector2* cursor, float *v, float min_v, float max_v, pthread_rwlock_t *rw) {
     push_gui_id(label);

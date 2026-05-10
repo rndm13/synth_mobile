@@ -19,12 +19,20 @@ typedef struct SynthProfiling {
     timespec_t total_time;
 } SynthProfiling;
 
+typedef struct Distortion {
+    pthread_rwlock_t rw;
+
+    float wet_dry_ratio;
+    float gain;
+} Distortion;
+
 typedef struct Synth {
     SynthProfiling prof;
     float key_freq_arr[KEY_COUNT];
 
     char program_name[PROGRAM_NAME_CAPACITY];
     SynthParams params;
+    Distortion distortion;
     Osc osc_arr[OSC_COUNT];
     Env env_arr[ENV_COUNT];
     Filter flt;

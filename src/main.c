@@ -20,12 +20,13 @@
 #include "filter.h"
 #include "file.h"
 
-#define TAB_X(X)                \
-    X(TAB_SYNTH, "Synth")       \
-    X(TAB_OSC,   "Oscillators") \
-    X(TAB_ENV,   "Envelopes")   \
-    X(TAB_FLT,   "Filters")     \
-    X(TAB_KEYS,  "Keys")        \
+#define TAB_X(X)                    \
+    X(TAB_SYNTH,     "Synth")       \
+    X(TAB_OSC,       "Oscillators") \
+    X(TAB_ENV,       "Envelopes")   \
+    X(TAB_FLT,       "Filter")      \
+    X(TAB_EFFECTS,   "Effects")     \
+    X(TAB_KEYS,      "Keys")        \
 
 typedef enum Tab {
     TAB_X(X_ENUM)
@@ -367,21 +368,26 @@ void draw_tab_synth(Vector2* cursor_p) {
         }
     }
 
+    if (draw_button("Randomize", &cursor_p_r1)) {
+        randomize_program(&g_a.s);
+        add_toast("Successfully randomized program");
+    }
+
     cursor_p->y += BUTTON_SIZE_H + GUI_GAP;
     Vector2 cursor_p_r2 = *cursor_p;
+
     set_gui_dir(GD_HORIZONTAL);
+
     draw_knob("Amp", &cursor_p_r2, &g_a.s.params.amp, 0.0f, 1.0f, &g_a.s.params.rw);
     draw_knob("Pan", &cursor_p_r2, &g_a.s.params.pan, 0.0f, 1.0f, &g_a.s.params.rw);
 
     cursor_p->y += KNOB_SIZE_H + GUI_GAP;
     Vector2 cursor_p_r3 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
+
     draw_toggle("Debug", &cursor_p_r3, &g_a.show_debug, NULL);
+
     draw_toggle("Profiling", &cursor_p_r3, &g_a.show_prof, NULL);
-    if (draw_button("Randomize", &cursor_p_r1)) {
-        randomize_program(&g_a.s);
-        add_toast("Successfully randomized program");
-    }
 }
 
 void draw_tab_osc(Vector2* cursor_p) {
@@ -552,6 +558,21 @@ void draw_tab_keys(Vector2* cursor_p) {
     }
 }
 
+void draw_tab_effects(Vector2* cursor_p) {
+    set_gui_dir(GD_VERTICAL);
+    draw_text("Distortion", cursor_p);
+
+    set_gui_dir(GD_HORIZONTAL);
+
+    draw_knob("Wet/Dry", cursor_p,
+            &g_a.s.distortion.wet_dry_ratio, 0.0f, 1.0f,
+            &g_a.s.distortion.rw);
+    draw_knob("Gain", cursor_p, &g_a.s.distortion.gain,
+            DISTORTION_GAIN_MIN, DISTORTION_GAIN_MAX,
+            &g_a.s.distortion.rw);
+
+}
+
 void process_ui() {
     switch (g_a.cur_tab) {
     case TAB_SYNTH:
@@ -565,6 +586,8 @@ void process_ui() {
     case TAB_KEYS:
         process_synth_keyboard();
         break;
+    case TAB_EFFECTS:
+      break;
     }
 }
 
@@ -596,6 +619,9 @@ void draw_ui() {
         break;
     case TAB_KEYS:
         draw_tab_keys(&cursor_p);
+        break;
+    case TAB_EFFECTS:
+        draw_tab_effects(&cursor_p);
         break;
     }
 

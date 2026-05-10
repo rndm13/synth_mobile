@@ -18,6 +18,9 @@
 #define OSC_DETUNE_MIN 5
 #define OSC_DETUNE_MAX 300
 
+#define DISTORTION_GAIN_MIN 1.0f
+#define DISTORTION_GAIN_MAX 5.0f
+
 #define ENV_A_MIN 0.2f
 #define ENV_A_MAX 5.0f
 #define ENV_D_MIN 0.2f
