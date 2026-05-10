@@ -13,6 +13,7 @@
 #define KEY_WHITE_COLOR             WHITE
 #define KEY_BLACK_COLOR             BLACK
 #define KEY_OUTER_COLOR             BLACK
+#define KEY_LINE_THICKNESS          5
 
 #define GUI_LABEL_MAX_LEN           128
 #define GUI_GAP                     10
