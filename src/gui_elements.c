@@ -337,7 +337,7 @@ bool draw_tab_menu(const char* label, Vector2 *cursor, Vector2 size, const char 
         // Background
         DrawRectangleRec(tab_rec, bg_col);
         // Outer line
-        DrawRectangleLinesEx(tab_rec, 1.0f, TAB_OUTER_COLOR);
+        DrawRectangleLinesEx(tab_rec, TAB_LINE_THICKNESS, TAB_OUTER_COLOR);
         // Active accent
         if (active) {
             DrawRectangle(tab_rec.x, tab_rec.y, tab_rec.width, 3, TAB_ACCENT_LINE_COLOR);
@@ -369,7 +369,7 @@ bool draw_wave(const char* label, Vector2 *cursor, Vector2 size, float *buffer, 
     Rectangle rec = {cursor->x, cursor->y, size.x, size.y};
 
     DrawRectangle(cursor->x, cursor->y, size.x, size.y, WAVE_INNER_COLOR);
-    DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, WAVE_OUTER_COLOR);
+    DrawRectangleLinesEx(rec, WAVE_LINE_THICKNESS, WAVE_OUTER_COLOR);
 
     for (int i = 0; i < size.x - 1; i++) {
         int si = i * buf_size / size.x;
@@ -408,8 +408,8 @@ bool draw_button(const char* label, Vector2 *cursor) {
     bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
 
-    DrawRectangle(cursor->x, cursor->y, size.x, size.y, BUTTON_INNER_COLOR);
-    DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, BUTTON_LINE_COLOR);
+    DrawRectangleRec(rec, BUTTON_INNER_COLOR);
+    DrawRectangleLinesEx(rec, BUTTON_LINE_THICKNESS, BUTTON_LINE_COLOR);
     DrawText(label, cursor->x + GUI_GAP, cursor->y + GUI_GAP, FONT_SIZE, TEXT_COLOR);
 
     update_cursor(cursor, size.x + GUI_GAP, size.y + GUI_GAP);
@@ -441,8 +441,8 @@ bool draw_toggle(const char* label, Vector2 *cursor, bool *v, pthread_rwlock_t *
         color = TOGGLE_ACTIVE_COLOR;
     }
 
-    DrawRectangle(cursor->x, cursor->y, size.x, size.y, color);
-    DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, TOGGLE_LINE_COLOR);
+    DrawRectangleRec(rec, color);
+    DrawRectangleLinesEx(rec, TOGGLE_LINE_THICKNESS, TOGGLE_LINE_COLOR);
     DrawText(label, cursor->x + GUI_GAP, cursor->y + GUI_GAP, FONT_SIZE, TEXT_COLOR);
 
     update_cursor(cursor, size.x + GUI_GAP, size.y + GUI_GAP);
@@ -496,8 +496,8 @@ bool draw_dropdown(
         reset_selected_gui_id();
     }
 
-    DrawRectangle(cursor->x, cursor->y, size.x, size.y, DROPDOWN_INNER_COLOR);
-    DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, DROPDOWN_LINE_COLOR);
+    DrawRectangleRec(rec, DROPDOWN_INNER_COLOR);
+    DrawRectangleLinesEx(rec, DROPDOWN_LINE_THICKNESS, DROPDOWN_LINE_COLOR);
     DrawText(label, cursor->x + GUI_GAP, cursor->y + GUI_GAP, FONT_SIZE, TEXT_COLOR);
 
     update_cursor(cursor, size.x + GUI_GAP, size.y + GUI_GAP);
@@ -556,13 +556,15 @@ void draw_dropdown_menu() {
     pos.y += dropdown->scroll;
 
     for (size_t i = 0; i < dropdown->opt_count; i++) {
-        DrawRectangle(
-                pos.x, pos.y,
-                DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
+        Rectangle rec = {
+            pos.x, pos.y,
+            DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
+        };
+        DrawRectangleRec(
+                rec,
                 DROPDOWN_ITEM_INNER_COLOR);
-        DrawRectangleLines(
-                pos.x, pos.y,
-                DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
+        DrawRectangleLinesEx(
+                rec, DROPDOWN_ITEM_LINE_THICKNESS,
                 DROPDOWN_ITEM_LINE_COLOR);
         DrawText(dropdown->opt_arr[i],
                 pos.x + DROPDOWN_ITEM_PAD, pos.y + DROPDOWN_ITEM_PAD, FONT_SIZE, TEXT_COLOR);
@@ -617,8 +619,8 @@ bool draw_text_field(const char* label, Vector2 *cursor, Vector2 size, char* v, 
         selected = false;
     }
 
-    DrawRectangle(cursor->x, cursor->y, size.x, size.y, TEXT_FIELD_INNER_COLOR);
-    DrawRectangleLines(cursor->x, cursor->y, size.x, size.y, TEXT_FIELD_LINE_COLOR);
+    DrawRectangleRec(rec, TEXT_FIELD_INNER_COLOR);
+    DrawRectangleLinesEx(rec, TEXT_FIELD_LINE_THICKNESS, TEXT_FIELD_LINE_COLOR);
     DrawText(v, cursor->x + GUI_GAP, cursor->y + GUI_GAP, FONT_SIZE, TEXT_COLOR);
 
     if (selected && show_cursor) {
@@ -896,20 +898,21 @@ void draw_tkeyboard() {
     int center_off_x = (screen_w - l1_size_w) / 2;
     Vector2 m_pos = GetMousePosition();
 
-    DrawRectangle(TKEY_GAP, screen_h - size_h, size_w, size_h, TKEY_INNER_COLOR);
-    DrawRectangleLines(TKEY_GAP, screen_h - size_h, size_w, size_h, TKEY_LINE_COLOR);
+    Rectangle rec = { TKEY_GAP, screen_h - size_h, size_w, size_h };
+    DrawRectangleRec(rec, TKEY_INNER_COLOR);
+    DrawRectangleLinesEx(rec, TEXT_FIELD_LINE_THICKNESS, TKEY_LINE_COLOR);
 
     for (size_t i = 0; i < ARRAY_SIZE(tk_key_matr); i++) {
         int x = center_off_x + tk_line_off_arr[i];
         int y = screen_h - size_h + i * (TKEY_SIZE_H + TKEY_GAP) + TKEY_GAP;
         for (size_t j = 0; j < tk_key_arr_size_arr[i]; j++) {
-            Rectangle rec = {x, y, tk_key_size_w_matr[i][j], TKEY_SIZE_H};
-            bool hovered = CheckCollisionPointRec(m_pos, rec);
+            Rectangle rec_key = {x, y, tk_key_size_w_matr[i][j], TKEY_SIZE_H};
+            bool hovered = CheckCollisionPointRec(m_pos, rec_key);
             bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovered;
             Color color = clicked ? TKEY_ACTIVE_COLOR : TKEY_INACTIVE_COLOR;
 
-            DrawRectangle(x, y, tk_key_size_w_matr[i][j], TKEY_SIZE_H, color);
-            DrawRectangleLines(x, y, tk_key_size_w_matr[i][j], TKEY_SIZE_H, TKEY_LINE_COLOR);
+            DrawRectangleRec(rec_key, color);
+            DrawRectangleLinesEx(rec_key, TKEY_LINE_THICKNESS, TKEY_LINE_COLOR);
             DrawText(get_key_label(tk_key_matr[i][j]), x + GUI_GAP, y + TKEY_GAP, FONT_SIZE, TEXT_COLOR);
 
             x += tk_key_size_w_matr[i][j] + TKEY_GAP;
