@@ -24,8 +24,11 @@ typedef struct DropdownData {
 } DropdownData;
 
 typedef struct ToastData {
+    Rectangle rec;
     char msg[ERR_MSG_CAPACITY];
+
     float ttl;
+    float time_alive;
 } ToastData;
 
 typedef struct TKeyboardData {
@@ -633,14 +636,51 @@ bool draw_text_field(const char* label, Vector2 *cursor, Vector2 size, char* v, 
     return prevent_reset;
 }
 
+void size_toast_msg(ToastData *td) {
+    char* str_space = td->msg;
+    size_t width   = MeasureText(td->msg, FONT_SIZE);
+    size_t width_l = 0;
+    size_t width_r = width;
+
+    td->rec.height = FONT_SIZE + GUI_GAP * 2;
+
+    while (width_r > TOAST_MAX_SIZE_W) {
+        str_space = strstr(str_space, " ");
+        if (str_space == NULL) {
+            break;
+        }
+
+        width_r = MeasureText(str_space, FONT_SIZE);
+        width_l = width - width_r;
+        if (width_l > TOAST_MAX_SIZE_W) {
+            width -= width_l;
+            width_l = 0;
+
+            *str_space = '\n';
+            td->rec.height += FONT_SIZE;
+        }
+
+        str_space += 1;
+    }
+
+    td->rec.width = MeasureText(td->msg, FONT_SIZE) + GUI_GAP * 2;
+}
+
 void add_toast(const char* fmt, ...) {
     ToastData td = {};
     va_list varg;
-
     va_start(varg, fmt);
+
+    td.rec.y = GUI_GAP;
+    for (size_t i = 0; i < g_ctx.toast_count; i++) {
+        td.rec.y += g_ctx.toast_arr[i].rec.height + GUI_GAP;
+    }
 
     td.ttl = TOAST_INITIAL_TTL;
     vsnprintf(td.msg, ERR_MSG_CAPACITY, fmt, varg);
+
+    size_toast_msg(&td);
+    td.rec.x = -td.rec.width;
 
     if (g_ctx.toast_count < MAX_TOAST_COUNT) {
         g_ctx.toast_arr[g_ctx.toast_count++] = td;
@@ -664,40 +704,47 @@ static void process_toast_arr(void) {
         return;
     }
 
+    Vector2 cursor = {
+        GUI_GAP,
+        GUI_GAP
+    };
+
     for (size_t i = 0; i < g_ctx.toast_count; i++) {
-        g_ctx.toast_arr[i].ttl -= GetFrameTime();
+        Vector2 pos = {g_ctx.toast_arr[i].rec.x, g_ctx.toast_arr[i].rec.y};
+        Vector2 target_pos = cursor;
+        if (g_ctx.toast_arr[i].ttl <= g_ctx.toast_arr[i].time_alive) {
+            target_pos.x = -g_ctx.toast_arr[i].rec.width;
+        }
+
+        pos = Vector2MoveTowards(pos, target_pos, TOAST_SPEED * GetFrameTime());
+        g_ctx.toast_arr[i].rec.x = pos.x;
+        g_ctx.toast_arr[i].rec.y = pos.y;
+
+        cursor.y += g_ctx.toast_arr[i].rec.height + GUI_GAP;
     }
 
-    if (g_ctx.toast_arr[0].ttl <= 0) {
+    for (size_t i = 0; i < g_ctx.toast_count; i++) {
+        g_ctx.toast_arr[i].time_alive += GetFrameTime();
+    }
+
+    if (g_ctx.toast_arr[0].ttl <= g_ctx.toast_arr[0].time_alive &&
+        g_ctx.toast_arr[0].rec.x == -g_ctx.toast_arr[0].rec.width) {
         remove_last_toast();
     }
 }
 
 static void draw_toast_arr(void) {
-    Vector2 cursor = {
-        // GetScreenWidth() - GUI_GAP - TOAST_SIZE_W,
-        // GetScreenHeight() - GUI_GAP - TOAST_SIZE_H
-        GUI_GAP, GUI_GAP
-    };
     Rectangle rec = {};
 
-    rec.width = TOAST_SIZE_W;
-    rec.height = TOAST_SIZE_H;
-
     for (ssize_t i = 0; i < g_ctx.toast_count; i++) {
-        rec.x = cursor.x;
-        rec.y = cursor.y;
+        rec = g_ctx.toast_arr[i].rec;
 
         DrawRectangleRec(rec, TOAST_INNER_COLOR);
         DrawRectangleLinesEx(rec, TOAST_LINE_THICKNESS, TOAST_LINE_COLOR);
         DrawText(
-                g_ctx.toast_arr[i].msg, cursor.x + GUI_GAP, cursor.y + GUI_GAP,
+                g_ctx.toast_arr[i].msg, rec.x + GUI_GAP, rec.y + GUI_GAP,
                 FONT_SIZE, TEXT_COLOR);
-
-        cursor.y += GUI_GAP + TOAST_SIZE_H;
     }
-
-    // DrawText(TextFormat("toast_cnt: %zu\nx %f\ny %f", g_ctx.toast_count, cursor.x, cursor.y), 0, 0, FONT_SIZE, TEXT_COLOR);
 }
 
 static int tk_l1_key_arr[] = {
@@ -919,7 +966,7 @@ void start_gui_ctx(void) {
 
 void finish_gui_ctx(void) {
     if (g_ctx.cur_id.size > 0) {
-        // Log...
+        DrawText("ERROR: Unterminated GUI ID stack.", 0, 0, FONT_SIZE, RED);
     };
     memset(&g_ctx.cur_id, 0, sizeof(g_ctx.cur_id));
 

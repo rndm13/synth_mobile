@@ -97,11 +97,11 @@
 
 #define TOAST_INNER_COLOR           LIGHTGRAY
 #define TOAST_LINE_COLOR            BLACK
+#define TOAST_MAX_SIZE_W            400
 #define TOAST_LINE_THICKNESS        1
 #define TOAST_INITIAL_TTL           5.0f
+#define TOAST_SPEED                 1000
 
-#define TOAST_SIZE_W                GUI_GAP * 2 + 350
-#define TOAST_SIZE_H                GUI_GAP * 2 + 40
 #define MAX_TOAST_COUNT             5
 
 #define FONT_SIZE                   20

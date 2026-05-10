@@ -145,16 +145,21 @@ void init_fft_stream() {
 }
 
 void init_app() {
-    g_a.cur_tab = TAB_KEYS;
+    int e = 0;
 
     g_a.skeyboard.cur_octave = 3;
     update_synth_keyboard();
 
-    init_program_selection(PROGRAM_PATH, &g_a.program_selection);
+    e = init_program_selection(PROGRAM_PATH, &g_a.program_selection);
+    if (e != 0) {
+        add_toast("Failed to initialize program selection: %d", e);
+    }
 
     init_fft_stream();
     init_synth(&g_a.s);
     init_audio();
+
+    g_a.cur_tab = TAB_KEYS;
 }
 
 void deinit_app() {
@@ -330,6 +335,7 @@ void draw_fps() {
 
 void draw_tab_synth(Vector2* cursor_p) {
     Vector2 tfield_s = { TEXT_FIELD_SIZE_W, TEXT_FIELD_SIZE_H };
+    int e = 0;
 
     const char* program_opt_arr[PROGRAM_COUNT_MAX] = {};
     for (size_t i = 0; i < g_a.program_selection.program_count; i++) {
@@ -344,11 +350,21 @@ void draw_tab_synth(Vector2* cursor_p) {
                 "Open", &cursor_p_r1,
                 program_opt_arr, g_a.program_selection.program_count,
                 &g_a.program_selection.selected_program_idx)) {
-        open_program(&g_a.s, &g_a.program_selection);
+        e = open_program(&g_a.s, &g_a.program_selection);
+        if (e != 0) {
+            add_toast("Failed opening program: %s", e);
+        } else {
+            add_toast("Successfully opened program");
+        }
     }
 
     if (draw_button("Save", &cursor_p_r1)) {
-        save_program(&g_a.s, &g_a.program_selection);
+        e = save_program(&g_a.s, &g_a.program_selection);
+        if (e != 0) {
+            add_toast("Failed saving program: %s", e);
+        } else {
+            add_toast("Successfully saved program");
+        }
     }
 
     cursor_p->y += BUTTON_SIZE_H + GUI_GAP;
