@@ -127,11 +127,11 @@ void prepare_filter(Filter* flt) {
 }
 
 void update_filter(Filter* flt, float* buffer, size_t n) {
-    int e = pthread_rwlock_rdlock(&flt->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
+    // int e = pthread_rwlock_rdlock(&flt->params.rw);
+    // if (e != 0) {
+    //     // TODO: Log
+    //     return;
+    // }
 
     if (flt->params.type == FT_DISABLED) {
         goto unlock;
@@ -162,11 +162,12 @@ void update_filter(Filter* flt, float* buffer, size_t n) {
     downsample_filter_u(flt, buffer, n);
 
 unlock:
-    e = pthread_rwlock_unlock(&flt->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
+    // e = pthread_rwlock_unlock(&flt->params.rw);
+    // if (e != 0) {
+    //     // TODO: Log
+    //     return;
+    // }
+    return;
 }
 
 float update_fir_filter(FIRFilter *fir, float input) {
