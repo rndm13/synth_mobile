@@ -5,20 +5,6 @@
 #include "settings.h"
 #include "utils.h"
 
-#define FLT_SAFE_CUTOFF_COEF 0.45
-#define FLT_FIR_TAPS         21
-#define FLT_FIR_CUTOFF       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
-
-#define FLT_OVERSAMPLING     4
-#define FLT_OVERSAMPLED_RATE (SAMPLE_RATE * FLT_OVERSAMPLING)
-
-#define FLT_CUTOFF_MIN       100.0f
-#define FLT_CUTOFF_MAX       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
-#define FLT_RESONANCE_MIN    0.5f
-#define FLT_RESONANCE_MAX    20.0f
-#define FLT_GAIN_MIN         -20.0f
-#define FLT_GAIN_MAX         20.0f
-
 #define FLT_TYPE_X(X)             \
     X(FT_LPF, "Low-pass filter")  \
     X(FT_HPF, "High-pass filter") \

@@ -28,6 +28,20 @@
 #define ENV_COUNT    2
 #define OSC_COUNT    2
 
+#define FLT_SAFE_CUTOFF_COEF 0.45
+#define FLT_FIR_TAPS         21
+#define FLT_FIR_CUTOFF       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
+
+#define FLT_OVERSAMPLING     4
+#define FLT_OVERSAMPLED_RATE (SAMPLE_RATE * FLT_OVERSAMPLING)
+
+#define FLT_CUTOFF_MIN       100.0f
+#define FLT_CUTOFF_MAX       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
+#define FLT_RESONANCE_MIN    0.71f
+#define FLT_RESONANCE_MAX    20.0f
+#define FLT_GAIN_MIN         -20.0f
+#define FLT_GAIN_MAX         20.0f
+
 #define DISPLAY_BUFFER_SIZE 256
 #define BUFFER_SIZE         4096
 #define FFT_BUFFER_SIZE_MUL 2

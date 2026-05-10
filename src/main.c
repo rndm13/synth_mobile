@@ -314,7 +314,7 @@ void draw_keys() {
         }
 
         DrawRectangleRec(key_rec, k_color);
-        DrawRectangleLinesEx(key_rec, KEY_LINE_THICKNESS, KEY_OUTER_COLOR);
+        DrawRectangleLinesEx(key_rec, KEY_LINE_THICKNESS, KEY_LINE_COLOR);
 
         if (g_a.show_debug) {
             DrawText(
@@ -542,7 +542,7 @@ void draw_tab_keys(Vector2* cursor_p) {
 
     draw_keys();
 
-    cursor_p->x = GetScreenWidth()  - KNOB_SIZE_W;
+    cursor_p->x = GetScreenWidth() - KNOB_SIZE_W - GUI_GAP;
     if (draw_knob_i("Octave", cursor_p, &g_a.skeyboard.cur_octave, 0, OCTAVE_COUNT - 2, NULL)) {
         update_synth_keyboard();
     }
@@ -570,7 +570,7 @@ void process_ui() {
 
 void draw_ui() {
     Vector2 cursor_p = {GUI_GAP, GUI_GAP};
-    Vector2 tab_s = { GetScreenWidth() - 2 * GUI_GAP, TAB_H };
+    Vector2 tab_s = { GetScreenWidth() - 2 * GUI_GAP, TAB_SIZE_H };
     const char* tab_l[] = {
         TAB_X(X_STR_ARR)
     };
@@ -605,6 +605,7 @@ void draw_ui() {
 
     if (g_a.show_prof) {
         draw_profiling_stats();
+        draw_fps();
     }
 }
 
@@ -630,7 +631,6 @@ int main(void) {
             ClearBackground(BG_COLOR);
 
             draw_ui();
-            draw_fps();
         EndDrawing();
     }
 

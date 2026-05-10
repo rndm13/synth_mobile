@@ -185,14 +185,22 @@ bool draw_knob(const char *label, Vector2* cursor, float *v, float min_v, float 
     float new_v = *v;
 
     Vector2 m_pos = GetMousePosition();
-    Vector2 center_pos = {cursor->x + KNOB_RADIUS, cursor->y + FONT_SIZE + GUI_GAP + KNOB_RADIUS};
+    Vector2 center_pos = {
+        cursor->x + KNOB_RADIUS,
+        cursor->y + FONT_SIZE + GUI_GAP + KNOB_RADIUS
+    };
 
     float cur_scaled_percent = (*v - min_v) / (max_v - min_v);
     float cur_angle = KNOB_START_ANGLE + (cur_scaled_percent * KNOB_ANGLE_RANGE);
-    float cur_rad_angle = cur_angle * DEG2RAD;
-    Vector2 indicator_pos = {
-        center_pos.x + cosf(cur_rad_angle) * (KNOB_RADIUS - KNOB_INDICATOR_OFF),
-        center_pos.y + sinf(cur_rad_angle) * (KNOB_RADIUS - KNOB_INDICATOR_OFF)
+    Vector2 indicator_origin = {
+        -KNOB_INDICATOR_RADIUS + KNOB_INDICATOR_SIZE_W,
+        0
+    };
+    Rectangle indicator_rec = {
+        center_pos.x,
+        center_pos.y,
+        KNOB_INDICATOR_SIZE_W,
+        KNOB_INDICATOR_SIZE_H,
     };
     int text_w = MeasureText(label, FONT_SIZE);
 
@@ -217,14 +225,12 @@ bool draw_knob(const char *label, Vector2* cursor, float *v, float min_v, float 
     DrawText(label, cursor->x, cursor->y, FONT_SIZE, TEXT_COLOR);
     DrawText(TextFormat("%.2f", *v), cursor->x, center_pos.y + KNOB_RADIUS + GUI_GAP, FONT_SIZE, TEXT_COLOR);
 
-    // Background
+    DrawCircleV(center_pos, KNOB_RADIUS + KNOB_LINE_THICKNESS, KNOB_LINE_COLOR);
     DrawCircleV(center_pos, KNOB_RADIUS, KNOB_INNER_COLOR);
-    // Outer lines
-    DrawCircleLines(center_pos.x, center_pos.y, KNOB_RADIUS, KNOB_OUTER_COLOR);
-    // TODO: change indicator to a rectangle
-    DrawCircleV(indicator_pos, KNOB_INDICATOR_SIZE, KNOB_INDICATOR_COLOR);
 
-    update_cursor(cursor, fmax(text_w + GUI_GAP, KNOB_SIZE_W), KNOB_SIZE_H);
+    DrawRectanglePro(indicator_rec, indicator_origin, cur_angle, KNOB_INDICATOR_COLOR);
+
+    update_cursor(cursor, fmax(text_w + GUI_GAP, KNOB_SIZE_W + GUI_GAP), KNOB_SIZE_H + GUI_GAP);
 
     UPDATE_VALUE(updated, v, new_v, rw);
 
@@ -404,11 +410,16 @@ bool draw_button(const char* label, Vector2 *cursor) {
     int text_w = MeasureText(label, FONT_SIZE);
     Vector2 size = { GUI_GAP * 2 + text_w, BUTTON_SIZE_H };
     Rectangle rec = { cursor->x, cursor->y, size.x, size.y };
+    Color col = BUTTON_INNER_COLOR;
 
     bool hovering = CheckCollisionPointRec(GetMousePosition(), rec);
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovering;
 
-    DrawRectangleRec(rec, BUTTON_INNER_COLOR);
+    if (clicked) {
+        col = BUTTON_ACTIVE_COLOR;
+    }
+
+    DrawRectangleRec(rec, col);
     DrawRectangleLinesEx(rec, BUTTON_LINE_THICKNESS, BUTTON_LINE_COLOR);
     DrawText(label, cursor->x + GUI_GAP, cursor->y + GUI_GAP, FONT_SIZE, TEXT_COLOR);
 
@@ -560,9 +571,12 @@ void draw_dropdown_menu() {
             pos.x, pos.y,
             DROPDOWN_ITEM_SIZE_W, DROPDOWN_ITEM_SIZE_H,
         };
-        DrawRectangleRec(
-                rec,
-                DROPDOWN_ITEM_INNER_COLOR);
+
+        Color col = DROPDOWN_ITEM_INNER_COLOR;
+        if (*dropdown->active_idx == i) {
+            col = DROPDOWN_ITEM_ACTIVE_COLOR;
+        }
+        DrawRectangleRec(rec, col);
         DrawRectangleLinesEx(
                 rec, DROPDOWN_ITEM_LINE_THICKNESS,
                 DROPDOWN_ITEM_LINE_COLOR);

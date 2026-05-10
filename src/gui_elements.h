@@ -5,66 +5,79 @@
 #include <stddef.h>
 #include <pthread.h>
 
+#define COL_BG1                              CLITERAL(Color){0x07, 0x02, 0x0D, 0xFF}
+#define COL_BG2                              CLITERAL(Color){0x2E, 0x29, 0x24, 0xFF}
+#define COL_FG1                              CLITERAL(Color){0xF2, 0xF4, 0xF3, 0xFF}
+#define COL_FG2                              CLITERAL(Color){0xD3, 0xD9, 0xD6, 0xFF}
+#define COL_AC1                              CLITERAL(Color){0x76, 0x2C, 0x77, 0xFF}
+#define COL_AC2                              CLITERAL(Color){0x4A, 0x1C, 0x4A, 0xFF}
+
 #define WIN_SIZE_W                           800
 #define WIN_SIZE_H                           450
 
 #define KEY_WIDTH                            40
 #define KEY_HEIGHT                           100
-#define KEY_WHITE_COLOR                      WHITE
-#define KEY_BLACK_COLOR                      BLACK
-#define KEY_OUTER_COLOR                      BLACK
-#define KEY_LINE_THICKNESS                   5
+#define KEY_WHITE_COLOR                      COL_AC1
+#define KEY_BLACK_COLOR                      COL_AC2
+#define KEY_LINE_COLOR                       COL_BG2
+#define KEY_LINE_THICKNESS                   2.0f
 
 #define GUI_LABEL_MAX_LEN                    128
 #define GUI_GAP                              10
-#define TAB_H                                50
 
-#define BG_COLOR                             RAYWHITE
-#define TEXT_COLOR                           BLACK
-#define TEXT_INACTIVE_COLOR                  GRAY
+#define BG_COLOR                             COL_BG1
+#define TEXT_COLOR                           COL_FG1
+#define TEXT_INACTIVE_COLOR                  COL_FG2
 
-#define KNOB_INNER_COLOR                     LIGHTGRAY
-#define KNOB_OUTER_COLOR                     GRAY
-#define KNOB_INDICATOR_COLOR                 DARKBLUE
-#define KNOB_INDICATOR_SIZE                  5.0f
-#define KNOB_INDICATOR_OFF                   10.0f
+#define KNOB_INNER_COLOR                     COL_BG2
+#define KNOB_LINE_COLOR                      COL_AC2
+#define KNOB_LINE_THICKNESS                  2.0f
+#define KNOB_INDICATOR_COLOR                 COL_FG1
 #define KNOB_START_ANGLE                     135.0f
 #define KNOB_END_ANGLE                       405.0f
 #define KNOB_ANGLE_RANGE                     (KNOB_END_ANGLE - KNOB_START_ANGLE)
+#define KNOB_RADIUS                          25.0f
+#define KNOB_SIZE_W                          (2 * KNOB_RADIUS)
+#define KNOB_SIZE_H                          (2 * FONT_SIZE + 2 * KNOB_RADIUS + 2 * GUI_GAP)
+#define KNOB_INDICATOR_RADIUS                20.0f
+#define KNOB_INDICATOR_SIZE_H                3.0f
+#define KNOB_INDICATOR_SIZE_W                7.0f
 
 #define KNOB_START_DRAG                      -75.0f
 #define KNOB_END_DRAG                        75.0f
 #define KNOB_DRAG_RANGE                      (KNOB_END_DRAG - KNOB_START_DRAG)
 
-#define TAB_INACTIVE_COLOR                   LIGHTGRAY
-#define TAB_ACTIVE_COLOR                     RAYWHITE
-#define TAB_HOVERING_COLOR                   GRAY
-#define TAB_OUTER_COLOR                      DARKGRAY
-#define TAB_ACCENT_LINE_COLOR                SKYBLUE
-#define TAB_LINE_THICKNESS                   1.0f
+#define TAB_INACTIVE_COLOR                   COL_BG1
+#define TAB_ACTIVE_COLOR                     COL_BG2
+#define TAB_HOVERING_COLOR                   COL_AC2
+#define TAB_OUTER_COLOR                      COL_AC2
+#define TAB_ACCENT_LINE_COLOR                COL_AC1
+#define TAB_LINE_THICKNESS                   2.0f
+#define TAB_SIZE_H                           50
 
-#define BUTTON_INNER_COLOR                   LIGHTGRAY
-#define BUTTON_LINE_COLOR                    BLACK
-#define BUTTON_LINE_THICKNESS                1.0f
+#define BUTTON_INNER_COLOR                   COL_BG1
+#define BUTTON_ACTIVE_COLOR                  COL_AC2
+#define BUTTON_LINE_COLOR                    COL_BG2
+#define BUTTON_LINE_THICKNESS                2.0f
 #define BUTTON_SIZE_H                        (FONT_SIZE + GUI_GAP * 2)
 
-#define TOGGLE_INACTIVE_COLOR                RAYWHITE
-#define TOGGLE_ACTIVE_COLOR                  GRAY
-#define TOGGLE_LINE_COLOR                    BLACK
-#define TOGGLE_LINE_THICKNESS                1.0f
+#define TOGGLE_INACTIVE_COLOR                COL_BG1
+#define TOGGLE_ACTIVE_COLOR                  COL_AC2
+#define TOGGLE_LINE_COLOR                    COL_BG2
+#define TOGGLE_LINE_THICKNESS                2.0f
 
-#define WAVE_INNER_COLOR                     LIGHTGRAY
-#define WAVE_OUTER_COLOR                     BLACK
-#define WAVE_LINE_COLOR                      BLACK
-#define WAVE_LINE_THICKNESS                  1.0f
+#define WAVE_INNER_COLOR                     COL_BG2
+#define WAVE_OUTER_COLOR                     COL_AC2
+#define WAVE_LINE_COLOR                      COL_AC1
+#define WAVE_LINE_THICKNESS                  2.0f
 #define WAVE_SIZE_W                          500
 #define WAVE_SIZE_H                          150
 
-#define SLIDER_INNER_COLOR                   LIGHTGRAY
-#define SLIDER_LINE_COLOR                    BLACK
-#define SLIDER_LINE_THICKNESS                1.0f
-#define SLIDER_FILLED_COLOR                  DARKBLUE
-#define SLIDER_HANDLE_COLOR                  SKYBLUE
+#define SLIDER_INNER_COLOR                   COL_AC2
+#define SLIDER_LINE_COLOR                    COL_BG2
+#define SLIDER_LINE_THICKNESS                2.0f
+#define SLIDER_FILLED_COLOR                  COL_AC1
+#define SLIDER_HANDLE_COLOR                  COL_FG2
 #define SLIDER_HANDLE_SIZE_W                 10
 #define SLIDER_SIZE_W                        500
 #define SLIDER_SIZE_H                        50
@@ -75,37 +88,38 @@
 #define TKEY_SIZE_H                          30
 #define TKEY_GAP                             5
 
-#define TKEY_ACTIVE_COLOR                    DARKGRAY
-#define TKEY_INACTIVE_COLOR                  RAYWHITE
-#define TKEY_LINE_COLOR                      BLACK
-#define TKEY_LINE_THICKNESS                  1.0f
-#define TKEY_INNER_COLOR                     RAYWHITE
+#define TKEY_ACTIVE_COLOR                    COL_AC1
+#define TKEY_INACTIVE_COLOR                  COL_BG1
+#define TKEY_LINE_COLOR                      COL_AC2
+#define TKEY_LINE_THICKNESS                  2.0f
+#define TKEY_INNER_COLOR                     COL_BG2
 
 #define TEXT_FIELD_CURSOR_COLOR              TEXT_COLOR
 #define TEXT_FIELD_CURSOR_INTERVAL           0.5
 #define TEXT_FIELD_CURSOR_SIZE_W             10
 #define TEXT_FIELD_CURSOR_SIZE_H             3
-#define TEXT_FIELD_INNER_COLOR               LIGHTGRAY
-#define TEXT_FIELD_LINE_COLOR                BLACK
-#define TEXT_FIELD_LINE_THICKNESS            1.0f
+#define TEXT_FIELD_INNER_COLOR               COL_BG1
+#define TEXT_FIELD_LINE_COLOR                COL_BG2
+#define TEXT_FIELD_LINE_THICKNESS            2.0f
 #define TEXT_FIELD_SIZE_W                    250
 #define TEXT_FIELD_SIZE_H                    (FONT_SIZE + GUI_GAP * 2)
 
-#define DROPDOWN_INNER_COLOR                 LIGHTGRAY
-#define DROPDOWN_LINE_COLOR                  BLACK
-#define DROPDOWN_LINE_THICKNESS              1.0f
+#define DROPDOWN_INNER_COLOR                 COL_BG1
+#define DROPDOWN_LINE_COLOR                  COL_BG2
+#define DROPDOWN_LINE_THICKNESS              2.0f
 
-#define DROPDOWN_ITEM_INNER_COLOR            LIGHTGRAY
-#define DROPDOWN_ITEM_LINE_COLOR             BLACK
-#define DROPDOWN_ITEM_LINE_THICKNESS         1.0f
+#define DROPDOWN_ITEM_INNER_COLOR            COL_BG1
+#define DROPDOWN_ITEM_ACTIVE_COLOR           COL_AC2
+#define DROPDOWN_ITEM_LINE_COLOR             COL_BG2
+#define DROPDOWN_ITEM_LINE_THICKNESS         2.0f
 #define DROPDOWN_ITEM_SIZE_W                 300
 #define DROPDOWN_ITEM_SIZE_H                 30
 #define DROPDOWN_ITEM_PAD                    5
 
-#define TOAST_INNER_COLOR                    LIGHTGRAY
-#define TOAST_LINE_COLOR                     BLACK
+#define TOAST_INNER_COLOR                    COL_BG1
+#define TOAST_LINE_COLOR                     COL_BG2
 #define TOAST_MAX_SIZE_W                     400
-#define TOAST_LINE_THICKNESS                 1.0f
+#define TOAST_LINE_THICKNESS                 2.0f
 #define TOAST_INITIAL_TTL                    5.0f
 #define TOAST_SPEED                          1000
 #define TOAST_MAX_DRAG_X                     100
@@ -114,9 +128,6 @@
 
 #define FONT_SIZE                            20
 #define MAX_TOUCH_POINTS                     10
-#define KNOB_RADIUS                          25
-#define KNOB_SIZE_W                          (2 * KNOB_RADIUS + GUI_GAP)
-#define KNOB_SIZE_H                          (2 * FONT_SIZE + 2 * KNOB_RADIUS + 3 * GUI_GAP)
 
 #define MAX_CLICK_TIME_S                     0.1
 
