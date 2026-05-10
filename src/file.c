@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "ini.h"
+#include "src/filter.h"
 
 ProgramSelection* g_ps = NULL;
 
@@ -232,6 +233,12 @@ static int write_ini_file(Synth *s, const char* filepath) {
             goto close_file;
         }
 
+        e = write_ini_value_f(file, fparams->resonance, cur_section, "resonance");
+        if (e != 0) {
+            e = errno;
+            goto close_file;
+        }
+
         e = write_ini_value_f(file, fparams->gain, cur_section, "gain");
         if (e != 0) {
             e = errno;
@@ -343,6 +350,7 @@ static int read_ini_value(
 
         MATCH_I(params->type, cur_section, "type", section, name, value);
         MATCH_F(params->cutoff, cur_section, "cutoff", section, name, value);
+        MATCH_F(params->resonance, cur_section, "resonance", section, name, value);
         MATCH_F(params->gain, cur_section, "gain", section, name, value);
     }
 
@@ -422,6 +430,7 @@ void randomize_program(Synth *s) {
 
         params->type = RAND_RANGE(0, FT_MAX);
         params->cutoff = RAND_RANGEF(FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
+        params->resonance = RAND_RANGEF(FLT_RESONANCE_MIN, FLT_RESONANCE_MAX);
         params->gain = RAND_RANGEF(FLT_GAIN_MIN, FLT_GAIN_MAX);
 
         pthread_rwlock_unlock(&params->rw);
