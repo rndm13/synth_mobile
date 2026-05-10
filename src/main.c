@@ -378,6 +378,10 @@ void draw_tab_synth(Vector2* cursor_p) {
     set_gui_dir(GD_HORIZONTAL);
     draw_toggle("Debug", &cursor_p_r3, &g_a.show_debug, NULL);
     draw_toggle("Profiling", &cursor_p_r3, &g_a.show_prof, NULL);
+    if (draw_button("Randomize", &cursor_p_r1)) {
+        randomize_program(&g_a.s);
+        add_toast("Successfully randomized program");
+    }
 }
 
 void draw_tab_osc(Vector2* cursor_p) {
@@ -566,7 +570,7 @@ void process_ui() {
 
 void draw_ui() {
     Vector2 cursor_p = {GUI_GAP, GUI_GAP};
-    Vector2 tab_s = {GetScreenWidth() - 2 * GUI_GAP, TAB_H};
+    Vector2 tab_s = { GetScreenWidth() - 2 * GUI_GAP, TAB_H };
     const char* tab_l[] = {
         TAB_X(X_STR_ARR)
     };
@@ -576,6 +580,7 @@ void draw_ui() {
     set_gui_dir(GD_VERTICAL);
 
     draw_tab_menu("Tabs", &cursor_p, tab_s, tab_l, ARRAY_SIZE(tab_l), (int*)&g_a.cur_tab);
+
     switch (g_a.cur_tab) {
     case TAB_SYNTH:
         draw_tab_synth(&cursor_p);
