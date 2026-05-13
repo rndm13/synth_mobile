@@ -30,6 +30,11 @@ void init_synth(Synth* s) {
 
     s->distortion.wet_dry_ratio = 0.0f;
     s->distortion.gain = DISTORTION_GAIN_MIN;
+
+    s->delay.wet_dry_ratio = 0.0f;
+    s->delay.feedback = 0;
+    s->delay.delay_s = DELAY_S_MIN;
+
     e = pthread_rwlock_init(&s->distortion.rw, NULL);
     if (e != 0) {
         return;
@@ -181,10 +186,51 @@ void update_distortion(Distortion* d, float* buffer, size_t n) {
     }
 
     for (size_t i = 0; i < n; i++) {
-         wet = tanh(buffer[i] * d->gain);
-         buffer[i] =
-             buffer[i] * (1 - d->wet_dry_ratio) +
-             wet * d->wet_dry_ratio;
+        wet = tanh(buffer[i] * d->gain);
+        buffer[i] =
+            buffer[i] * (1 - d->wet_dry_ratio) +
+            wet * d->wet_dry_ratio;
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        buffer[i] = tanh(buffer[i]);
+    }
+
+unlock:
+    e = pthread_rwlock_unlock(&d->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+}
+
+void update_delay(Delay* d, float* buffer, size_t n) {
+    float wet = 0.0f;
+    int delay_length = 0;
+
+    int e = pthread_rwlock_rdlock(&d->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    delay_length = d->delay_s * SAMPLE_RATE;
+
+    if (d->wet_dry_ratio == 0) {
+        goto unlock;
+    }
+
+
+    for (size_t i = 0; i < n; i++) {
+        wet = d->buffer[(d->buffer_idx + delay_length - 1) % delay_length];
+        d->buffer[d->buffer_idx] = buffer[i] + d->buffer[d->buffer_idx] * d->feedback;
+
+        d->buffer_idx++;
+        d->buffer_idx %= delay_length;
+
+        buffer[i] =
+            buffer[i] * (1 - d->wet_dry_ratio) +
+            wet * d->wet_dry_ratio;
     }
 
     for (size_t i = 0; i < n; i++) {
@@ -241,9 +287,15 @@ void update_synth(Synth* s, float global_time, float* buffer, size_t n) {
 
     timespec_get(&section_time, TIME_UTC);
     update_distortion(&s->distortion, buffer, n);
+    s->prof.distortion_time = duration_from(section_time);
+
+    timespec_get(&section_time, TIME_UTC);
+    update_delay(&s->delay, buffer, n);
+    s->prof.delay_time = duration_from(section_time);
 
     timespec_get(&section_time, TIME_UTC);
     update_synth_amp(s, buffer, n);
+    s->prof.amp_time = duration_from(section_time);
 
     s->prof.total_time = duration_from(start_time);
 }

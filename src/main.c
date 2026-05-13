@@ -269,10 +269,16 @@ void draw_profiling_stats() {
                 "osc0: %dms\n"
                 "osc1: %dms\n"
                 "flt0: %dms\n"
+                "dist: %dms\n"
+                "delay: %dms\n"
+                "amp: %dms\n"
                 "total: %dms\n",
                 NS_TO_MS(g_a.s.prof.osc_time[0].tv_nsec),
                 NS_TO_MS(g_a.s.prof.osc_time[1].tv_nsec),
                 NS_TO_MS(g_a.s.prof.flt_time.tv_nsec),
+                NS_TO_MS(g_a.s.prof.distortion_time.tv_nsec),
+                NS_TO_MS(g_a.s.prof.delay_time.tv_nsec),
+                NS_TO_MS(g_a.s.prof.amp_time.tv_nsec),
                 NS_TO_MS(g_a.s.prof.total_time.tv_nsec)),
             GUI_GAP, GUI_GAP + FONT_SIZE,
             FONT_SIZE, RED);
@@ -552,15 +558,43 @@ void draw_tab_effects(Vector2* cursor_p) {
     set_gui_dir(GD_VERTICAL);
     draw_text("Distortion", cursor_p);
 
+    push_gui_id("Distortion");
+
+    Vector2 cursor_r1 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
 
-    draw_knob("Wet/Dry", cursor_p,
+    draw_knob("Wet/Dry", &cursor_r1,
             &g_a.s.distortion.wet_dry_ratio, 0.0f, 1.0f,
             &g_a.s.distortion.rw);
-    draw_knob("Gain", cursor_p, &g_a.s.distortion.gain,
+    draw_knob("Gain", &cursor_r1, &g_a.s.distortion.gain,
             DISTORTION_GAIN_MIN, DISTORTION_GAIN_MAX,
             &g_a.s.distortion.rw);
 
+    cursor_p->y += KNOB_SIZE_H + GUI_GAP;
+
+    pop_gui_id();
+
+    set_gui_dir(GD_VERTICAL);
+    draw_text("Delay", cursor_p);
+
+    push_gui_id("Delay");
+
+    Vector2 cursor_r2 = *cursor_p;
+    set_gui_dir(GD_HORIZONTAL);
+
+    draw_knob("Wet/Dry", &cursor_r2,
+            &g_a.s.delay.wet_dry_ratio, 0.0f, 1.0f,
+            &g_a.s.delay.rw);
+
+    draw_knob("Feedback", &cursor_r2,
+            &g_a.s.delay.feedback, 0.0f, 1.0f,
+            &g_a.s.delay.rw);
+
+    draw_knob("Delay (seconds)", &cursor_r2,
+            &g_a.s.delay.delay_s, DELAY_S_MIN, DELAY_S_MAX,
+            &g_a.s.delay.rw);
+
+    pop_gui_id();
 }
 
 void process_ui() {

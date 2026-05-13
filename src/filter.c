@@ -134,6 +134,22 @@ void update_filter(Filter* flt, float* buffer, size_t n) {
     // }
 
     if (flt->params.type == FT_DISABLED) {
+        for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
+            flt->x[i] = 0;
+        }
+
+        for (size_t i = 0; i < ARRAY_SIZE(flt->y); i++) {
+            flt->y[i] = 0;
+        }
+
+        for (size_t i = 0; i < ARRAY_SIZE(flt->fir_down.history); i++) {
+            flt->fir_down.history[i] = 0;
+        }
+
+        for (size_t i = 0; i < ARRAY_SIZE(flt->fir_up.history); i++) {
+            flt->fir_up.history[i] = 0;
+        }
+
         goto unlock;
     }
 

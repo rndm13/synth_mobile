@@ -8,6 +8,7 @@
 
 #include "ini.h"
 #include "src/filter.h"
+#include "src/settings.h"
 
 ProgramSelection* g_ps = NULL;
 
@@ -138,7 +139,8 @@ static int write_ini_file(Synth *s, const char* filepath) {
     Env *eparams = NULL;
     FilterParams *fparams = NULL;
     SynthParams *sparams = NULL;
-    Distortion *dparams = NULL;
+    Distortion *distparams = NULL;
+    Delay *delparams = NULL;
 
     file = fopen(filepath, "w");
 
@@ -264,14 +266,35 @@ static int write_ini_file(Synth *s, const char* filepath) {
     {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "distortion");
 
-        dparams = &s->distortion;
+        distparams = &s->distortion;
 
-        e = write_ini_value_f(file, dparams->wet_dry_ratio, cur_section, "wet_dry_ratio");
+        e = write_ini_value_f(file, distparams->wet_dry_ratio, cur_section, "wet_dry_ratio");
         if (e != 0) {
             goto close_file;
         }
 
-        e = write_ini_value_f(file, dparams->gain, cur_section, "gain");
+        e = write_ini_value_f(file, distparams->gain, cur_section, "gain");
+        if (e != 0) {
+            goto close_file;
+        }
+    }
+
+    {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "delay");
+
+        delparams = &s->delay;
+
+        e = write_ini_value_f(file, delparams->wet_dry_ratio, cur_section, "wet_dry_ratio");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, delparams->feedback, cur_section, "feedback");
+        if (e != 0) {
+            goto close_file;
+        }
+
+        e = write_ini_value_f(file, delparams->delay_s, cur_section, "delay_s");
         if (e != 0) {
             goto close_file;
         }
@@ -381,8 +404,18 @@ static int read_ini_value(
 
         Distortion *params = &s->distortion;
 
-        MATCH_I(params->wet_dry_ratio, cur_section, "wet_dry_ratio", section, name, value);
+        MATCH_F(params->wet_dry_ratio, cur_section, "wet_dry_ratio", section, name, value);
         MATCH_F(params->gain, cur_section, "gain", section, name, value);
+    }
+
+    {
+        snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "delay");
+
+        Delay *params = &s->delay;
+
+        MATCH_F(params->wet_dry_ratio, cur_section, "wet_dry_ratio", section, name, value);
+        MATCH_F(params->feedback, cur_section, "feedback", section, name, value);
+        MATCH_F(params->delay_s, cur_section, "delay_s", section, name, value);
     }
 
     return 1;
@@ -468,6 +501,17 @@ void randomize_program(Synth *s) {
 
         params->wet_dry_ratio = RAND_RANGEF(0, 1);
         params->gain = RAND_RANGEF(DISTORTION_GAIN_MIN, DISTORTION_GAIN_MAX);
+
+        pthread_rwlock_unlock(&params->rw);
+    }
+
+    {
+        Delay *params = &s->delay;
+        pthread_rwlock_wrlock(&params->rw);
+
+        params->wet_dry_ratio = RAND_RANGEF(0, 1);
+        params->feedback = RAND_RANGEF(0.0f, 0.45f);
+        params->delay_s = RAND_RANGEF(DELAY_S_MIN, DELAY_S_MAX);
 
         pthread_rwlock_unlock(&params->rw);
     }
