@@ -1,5 +1,6 @@
 #include "synth.h"
 
+#include "src/osc.h"
 #include "src/settings.h"
 #include "stdlib.h"
 #include "raymath.h"
@@ -32,10 +33,6 @@ void init_synth(Synth* s) {
     e = pthread_rwlock_init(&s->distortion.rw, NULL);
     if (e != 0) {
         return;
-    }
-
-    for (int i = 0; i < ARRAY_SIZE(s->key_freq_arr); i++) {
-        s->key_freq_arr[i] = powf(2.0f, (float)(i - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
     }
 }
 
@@ -103,12 +100,15 @@ void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float globa
     }
 }
 
-void update_osc(Synth* s, Osc* osc, Env* env, float global_time, float* buffer, size_t n) {
+void update_osc(Osc* osc, Env* env, float global_time, float* buffer, size_t n) {
     OscVoiceArr *ova = &osc->voice_arr;
     OscVoice *osc_voice = NULL;
     Voice voice = {};
-    int key_idx = 0;
     float wave_freq = 0;
+    float detune_mul = 0;
+    float detune_offset = 0;
+    float cents_mul = 0;
+    float semi_mul = 0;
     int e = 0;
 
     e = pthread_rwlock_rdlock(&osc->params.rw);
@@ -131,14 +131,12 @@ void update_osc(Synth* s, Osc* osc, Env* env, float global_time, float* buffer, 
         osc_voice = &ova->osc_voice_arr[v];
         voice = osc_voice->voice;
 
-        key_idx = voice.key_idx + osc->params.semi;
-        if (key_idx < 0) {
-            key_idx = 0;
-        } else if (key_idx > KEY_COUNT) {
-            key_idx = KEY_COUNT - 1;
-        }
+        detune_offset = osc_voice->unison_idx - (osc->params.unison - 1) / 2.0;
+        detune_mul = calc_cents_mul(osc->params.detune * detune_offset);
+        cents_mul = calc_cents_mul(osc->params.cents);
+        semi_mul = calc_semi_mul(osc->params.semi);
 
-        wave_freq = s->key_freq_arr[key_idx] * osc->params.cents_mul * osc_voice->detune_mul;
+        wave_freq = voice.freq * cents_mul * semi_mul * detune_mul;
         update_osc_voice(osc, env, osc_voice, global_time, wave_freq, buffer, n);
     }
 
@@ -230,11 +228,11 @@ void update_synth(Synth* s, float global_time, float* buffer, size_t n) {
     timespec_get(&start_time, TIME_UTC);
 
     timespec_get(&section_time, TIME_UTC);
-    update_osc(s, &s->osc_arr[0], &s->env_arr[0], global_time, buffer, n);
+    update_osc(&s->osc_arr[0], &s->env_arr[0], global_time, buffer, n);
     s->prof.osc_time[0] = duration_from(section_time);
 
     timespec_get(&section_time, TIME_UTC);
-    update_osc(s, &s->osc_arr[1], &s->env_arr[1], global_time, buffer, n);
+    update_osc(&s->osc_arr[1], &s->env_arr[1], global_time, buffer, n);
     s->prof.osc_time[1] = duration_from(section_time);
 
     timespec_get(&section_time, TIME_UTC);

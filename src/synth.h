@@ -28,7 +28,6 @@ typedef struct Distortion {
 
 typedef struct Synth {
     SynthProfiling prof;
-    float key_freq_arr[KEY_COUNT];
 
     char program_name[PROGRAM_NAME_CAPACITY];
     SynthParams params;

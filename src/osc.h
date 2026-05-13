@@ -27,8 +27,6 @@ typedef struct OscParams {
 
     int unison;
     int detune;
-
-    double cents_mul; // Calculated from cents
 } OscParams;
 
 typedef struct Osc {
@@ -43,6 +41,7 @@ typedef struct Osc {
 float calc_osc_value(OscType type, int wave_idx, int wave_length);
 void osc_add_voice(Osc* osc, Voice new_voice, float time);
 void prepare_osc_display_buffer(Osc* osc);
-double calc_cents_mul(double cents);
+float calc_semi_mul(int semi);
+float calc_cents_mul(float cents);
 void init_osc(Osc* osc);
 void deinit_osc(Osc* osc);

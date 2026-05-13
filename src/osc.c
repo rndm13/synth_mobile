@@ -26,8 +26,7 @@ float calc_osc_value(OscType type, int wave_idx, int wave_length) {
 }
 
 void osc_add_voice(Osc* osc, Voice new_voice, float time) {
-    float detune_mul_arr[OSC_UNISON_MAX] = {0};
-    int detune_idx = 0;
+    int unison = 0;
 
     int e = pthread_rwlock_rdlock(&osc->params.rw);
     if (e != 0) {
@@ -35,10 +34,7 @@ void osc_add_voice(Osc* osc, Voice new_voice, float time) {
         return;
     }
 
-    for (size_t i = 0; i < osc->params.unison; i++) {
-        double detune_offset = i - (osc->params.unison - 1) / 2.0;
-        detune_mul_arr[detune_idx++] = calc_cents_mul(osc->params.detune * detune_offset);
-    }
+    unison = osc->params.unison;
 
     e = pthread_rwlock_unlock(&osc->params.rw);
     if (e != 0) {
@@ -46,7 +42,7 @@ void osc_add_voice(Osc* osc, Voice new_voice, float time) {
         return;
     }
 
-    osc_voice_add_unison(&osc->voice_arr, new_voice, detune_mul_arr, detune_idx, time);
+    osc_voice_add_unison(&osc->voice_arr, new_voice, unison, time);
 }
 
 void prepare_osc_display_buffer(Osc* osc) {
@@ -68,7 +64,11 @@ void prepare_osc_display_buffer(Osc* osc) {
     }
 }
 
-double calc_cents_mul(double cents) {
+float calc_semi_mul(int semi) {
+    return powf(2, semi / (float)KEY_OCTAVE);
+}
+
+float calc_cents_mul(float cents) {
     return powf(2, cents / CENTS_IN_OCTAVE);
 }
 
@@ -77,6 +77,7 @@ void init_osc(Osc* osc) {
     if (e != 0) {
         return;
     }
+
     osc_voice_arr_init(&osc->voice_arr);
     osc->params.type = OT_SINE;
     osc->params.semi = 0;
@@ -85,13 +86,11 @@ void init_osc(Osc* osc) {
     osc->params.detune = OSC_DETUNE_MIN;
     osc->params.volume = 1.0f;
 
-    osc->params.cents_mul = calc_cents_mul(osc->params.cents);
-
     prepare_osc_display_buffer(osc);
 }
 
 void deinit_osc(Osc* osc) {
-    int e = pthread_rwlock_destroy(&osc->params.rw);
+    pthread_rwlock_destroy(&osc->params.rw);
     osc_voice_arr_deinit(&osc->voice_arr);
 }
 

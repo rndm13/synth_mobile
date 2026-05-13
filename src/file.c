@@ -133,6 +133,7 @@ static int write_ini_file(Synth *s, const char* filepath) {
     char cur_section[INI_SECTION_CAPACITY] = {};
     int e = 0;
     FILE* file = NULL;
+    OscVoiceArr *ov = NULL;
     OscParams *oparams = NULL;
     Env *eparams = NULL;
     FilterParams *fparams = NULL;
@@ -149,40 +150,40 @@ static int write_ini_file(Synth *s, const char* filepath) {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "osc", i);
 
         oparams = &s->osc_arr[i].params;
+        ov = &s->osc_arr[i].voice_arr;
 
         e = write_ini_value_i(file, oparams->cents, cur_section, "cents");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->detune, cur_section, "detune");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->unison, cur_section, "unison");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->semi, cur_section, "semi");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, oparams->volume, cur_section, "volume");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_i(file, oparams->type, cur_section, "type");
         if (e != 0) {
-            e = errno;
+            goto close_file;
+        }
+
+        e = write_ini_value_i(file, ov->rand_phase, cur_section, "rand_phase");
+        if (e != 0) {
             goto close_file;
         }
     }
@@ -194,25 +195,21 @@ static int write_ini_file(Synth *s, const char* filepath) {
 
         e = write_ini_value_f(file, eparams->attack, cur_section, "attack");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, eparams->decay, cur_section, "decay");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, eparams->sustain, cur_section, "sustain");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, eparams->release, cur_section, "release");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
     }
@@ -224,25 +221,21 @@ static int write_ini_file(Synth *s, const char* filepath) {
 
         e = write_ini_value_i(file, fparams->type, cur_section, "type");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, fparams->cutoff, cur_section, "cutoff");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, fparams->resonance, cur_section, "resonance");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, fparams->gain, cur_section, "gain");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
     }
@@ -254,19 +247,16 @@ static int write_ini_file(Synth *s, const char* filepath) {
 
         e = write_ini_value_f(file, sparams->amp, cur_section, "amp");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, sparams->pan, cur_section, "pan");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_s(file, s->program_name, cur_section, "name");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
     }
@@ -278,13 +268,11 @@ static int write_ini_file(Synth *s, const char* filepath) {
 
         e = write_ini_value_f(file, dparams->wet_dry_ratio, cur_section, "wet_dry_ratio");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
 
         e = write_ini_value_f(file, dparams->gain, cur_section, "gain");
         if (e != 0) {
-            e = errno;
             goto close_file;
         }
     }
@@ -314,6 +302,8 @@ int save_program(Synth *s, ProgramSelection* ps) {
 
     pthread_rwlock_rdlock(&s->osc_arr[0].params.rw);
     pthread_rwlock_rdlock(&s->osc_arr[1].params.rw);
+    pthread_rwlock_rdlock(&s->osc_arr[0].voice_arr.rw);
+    pthread_rwlock_rdlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_rdlock(&s->env_arr[0].rw);
     pthread_rwlock_rdlock(&s->env_arr[1].rw);
     pthread_rwlock_rdlock(&s->flt.params.rw);
@@ -323,6 +313,8 @@ int save_program(Synth *s, ProgramSelection* ps) {
 
     pthread_rwlock_unlock(&s->osc_arr[0].params.rw);
     pthread_rwlock_unlock(&s->osc_arr[1].params.rw);
+    pthread_rwlock_unlock(&s->osc_arr[0].voice_arr.rw);
+    pthread_rwlock_unlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_unlock(&s->env_arr[0].rw);
     pthread_rwlock_unlock(&s->env_arr[1].rw);
     pthread_rwlock_unlock(&s->flt.params.rw);
@@ -340,7 +332,8 @@ static int read_ini_value(
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "osc", i);
 
-        OscParams *params = &s->osc_arr[i].params;
+        Osc *o = &s->osc_arr[i];
+        OscParams *params = &o->params;
 
         MATCH_I(params->cents, cur_section, "cents", section, name, value);
         MATCH_I(params->detune, cur_section, "detune", section, name, value);
@@ -348,7 +341,7 @@ static int read_ini_value(
         MATCH_I(params->semi, cur_section, "semi", section, name, value);
         MATCH_F(params->volume, cur_section, "volume", section, name, value);
         MATCH_I(params->type, cur_section, "type", section, name, value);
-        params->cents_mul = calc_cents_mul(params->cents);
+        MATCH_I(o->voice_arr.rand_phase, cur_section, "rand_phase", section, name, value);
     }
 
     for (size_t i = 0; i < ARRAY_SIZE(s->env_arr); i++) {
@@ -399,6 +392,8 @@ int open_program(Synth *s, const ProgramSelection* ps) {
     int e = 0;
     pthread_rwlock_wrlock(&s->osc_arr[0].params.rw);
     pthread_rwlock_wrlock(&s->osc_arr[1].params.rw);
+    pthread_rwlock_wrlock(&s->osc_arr[0].voice_arr.rw);
+    pthread_rwlock_wrlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_wrlock(&s->env_arr[0].rw);
     pthread_rwlock_wrlock(&s->env_arr[1].rw);
     pthread_rwlock_wrlock(&s->flt.params.rw);
@@ -408,6 +403,8 @@ int open_program(Synth *s, const ProgramSelection* ps) {
 
     pthread_rwlock_unlock(&s->osc_arr[0].params.rw);
     pthread_rwlock_unlock(&s->osc_arr[1].params.rw);
+    pthread_rwlock_unlock(&s->osc_arr[0].voice_arr.rw);
+    pthread_rwlock_unlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_unlock(&s->env_arr[0].rw);
     pthread_rwlock_unlock(&s->env_arr[1].rw);
     pthread_rwlock_unlock(&s->flt.params.rw);
@@ -433,7 +430,6 @@ void randomize_program(Synth *s) {
         params->semi = RAND_RANGE(-OSC_SEMI_RANGE, OSC_SEMI_RANGE);
         params->volume = RAND_RANGEF(0, 1);
         params->type = RAND_RANGE(0, OT_MAX);
-        params->cents_mul = calc_cents_mul(params->cents);
 
         pthread_rwlock_unlock(&params->rw);
 

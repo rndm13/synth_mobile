@@ -251,6 +251,5 @@ void init_filter(Filter *flt) {
 }
 
 void deinit_filter(Filter *flt) {
-    int e = 0;
-    e = pthread_rwlock_destroy(&flt->params.rw);
+    pthread_rwlock_destroy(&flt->params.rw);
 }

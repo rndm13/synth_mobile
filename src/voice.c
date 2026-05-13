@@ -1,13 +1,24 @@
 #include "voice.h"
+
+#include <math.h>
 #include <pthread.h>
+#include <stdlib.h>
+
+#include "settings.h"
 
 // TODO: Log log log log
+static float calc_voice_freq(int k_idx) {
+    return powf(2.0f, (float)(k_idx - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
+}
+
 static void voice_set(VoiceArr* v, int v_idx, int k_idx) {
+    v->voice_arr[v_idx].freq = calc_voice_freq(k_idx);
     v->voice_arr[v_idx].key_idx = k_idx;
     v->voice_arr[v_idx].velocity = 40;
 }
 
 static void voice_reset(VoiceArr* v, int v_idx) {
+    v->voice_arr[v_idx].freq = 0.0f;
     v->voice_arr[v_idx].key_idx = KEY_IDX_INVALID;
     v->voice_arr[v_idx].velocity = 0;
 }
@@ -27,7 +38,6 @@ void voice_remove(VoiceArr *v, int v_idx) {
 
     voice_remove_u(v, v_idx);
 
-unlock:
     pthread_rwlock_unlock(&v->rw);
 }
 
@@ -76,26 +86,32 @@ void voice_release_key(VoiceArr *v, int k_idx) {
     pthread_rwlock_unlock(&v->rw);
 }
 
-static void osc_voice_set(OscVoiceArr* ov, int ov_idx, Voice v, float detune_mul, float time) {
+static void osc_voice_set(OscVoiceArr* ov, int ov_idx,
+        Voice v, int u_idx, int wave_idx, float time) {
     ov->osc_voice_arr[ov_idx].voice = v;
     ov->osc_voice_arr[ov_idx].start_time = time;
-    ov->osc_voice_arr[ov_idx].detune_mul = detune_mul;
+    ov->osc_voice_arr[ov_idx].unison_idx = u_idx;
 
     ov->osc_voice_arr[ov_idx].release_time = 0;
     ov->osc_voice_arr[ov_idx].released = false;
 
     ov->osc_voice_arr[ov_idx].last_env = 0;
-    ov->osc_voice_arr[ov_idx].wave_idx = 0;
+    ov->osc_voice_arr[ov_idx].wave_idx = wave_idx;
 }
 
 static void osc_voice_reset(OscVoiceArr* ov, int ov_idx) {
+    ov->osc_voice_arr[ov_idx].voice.freq = 0.0f;
     ov->osc_voice_arr[ov_idx].voice.key_idx = KEY_IDX_INVALID;
     ov->osc_voice_arr[ov_idx].voice.velocity = 0.0f;
-    ov->osc_voice_arr[ov_idx].wave_idx = 0;
+
     ov->osc_voice_arr[ov_idx].start_time = 0;
+    ov->osc_voice_arr[ov_idx].unison_idx = 0;
+
     ov->osc_voice_arr[ov_idx].release_time = 0;
-    ov->osc_voice_arr[ov_idx].last_env = 0;
     ov->osc_voice_arr[ov_idx].released = false;
+
+    ov->osc_voice_arr[ov_idx].last_env = 0;
+    ov->osc_voice_arr[ov_idx].wave_idx = 0;
 }
 
 void osc_voice_remove_u(OscVoiceArr *ov, int ov_idx) {
@@ -113,33 +129,43 @@ void osc_voice_remove(OscVoiceArr *ov, int ov_idx) {
 
     osc_voice_remove_u(ov, ov_idx);
 
-unlock:
     pthread_rwlock_unlock(&ov->rw);
 }
 
-void osc_voice_add_u(OscVoiceArr *ov, Voice v, float detune_mul, float time) {
+void osc_voice_add_u(OscVoiceArr *ov,
+        Voice v, int u_idx, float time) {
+    int wave_idx = 0;
+    int wave_length = 0;
+
     if (ov->osc_voice_count >= VOICE_MAX_COUNT) {
         // Shift voices left first and replace with the last index
         osc_voice_remove_u(ov, 0);
     }
 
-    osc_voice_set(ov, ov->osc_voice_count, v, detune_mul, time);
+    if (ov->rand_phase) {
+        wave_length = SAMPLE_RATE / v.freq;
+        wave_idx = rand() % wave_length;
+    }
+
+    osc_voice_set(ov, ov->osc_voice_count, v, u_idx, wave_idx, time);
     ov->osc_voice_count++;
 }
 
-void osc_voice_add(OscVoiceArr *ov, Voice v, float detune_mul, float time) {
+void osc_voice_add(OscVoiceArr *ov,
+        Voice v, float time) {
     pthread_rwlock_wrlock(&ov->rw);
 
-    osc_voice_add_u(ov, v, detune_mul, time);
+    osc_voice_add_u(ov, v, 0, time);
 
     pthread_rwlock_unlock(&ov->rw);
 }
 
-void osc_voice_add_unison(OscVoiceArr *ov, Voice v, const float *detune_mul, size_t detune_cnt, float time) {
+void osc_voice_add_unison(OscVoiceArr *ov,
+        Voice v, size_t cnt, float time) {
     pthread_rwlock_wrlock(&ov->rw);
 
-    for (size_t i = 0; i < detune_cnt; i++) {
-        osc_voice_add_u(ov, v, detune_mul[i], time);
+    for (size_t i = 0; i < cnt; i++) {
+        osc_voice_add_u(ov, v, i, time);
     }
 
     pthread_rwlock_unlock(&ov->rw);

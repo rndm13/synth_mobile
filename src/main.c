@@ -284,14 +284,17 @@ void draw_voice_arr() {
 
     for (int i = 0; i < osc->voice_arr.osc_voice_count; i++) {
         int k_idx = osc->voice_arr.osc_voice_arr[i].voice.key_idx;
-        float detune = osc->voice_arr.osc_voice_arr[i].detune_mul;
+        int unison = osc->voice_arr.osc_voice_arr[i].unison_idx;
         float start_time = osc->voice_arr.osc_voice_arr[i].start_time;
         float release_time = osc->voice_arr.osc_voice_arr[i].release_time;
         float env = osc->voice_arr.osc_voice_arr[i].last_env;
+        int wave_idx = osc->voice_arr.osc_voice_arr[i].wave_idx;
+
         DrawText(
                 TextFormat(
-                    "key: %d, d: %.2f, t: %.2f, r: %.2f, env: %.2f",
-                    k_idx, detune, GetTime() - start_time, release_time - start_time, env),
+                    "key: %d, u: %d, t: %.2f, r: %.2f, env: %.2f, w: %d",
+                    k_idx, unison, GetTime() - start_time,
+                    release_time - start_time, env, wave_idx),
                 GUI_GAP, GUI_GAP + FONT_SIZE * i,
                 FONT_SIZE, RED);
     }
@@ -434,22 +437,9 @@ void draw_tab_osc(Vector2* cursor_p) {
 
         draw_knob_i("Semitones", &split_cursor_p, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
 
-        bool c_cents = draw_knob_i("Cents", &split_cursor_p, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
-        if (c_cents) {
-            e = pthread_rwlock_wrlock(&params->rw);
-            if (e != 0) {
-                // TODO: Log
-                return;
-            }
+        draw_knob_i("Cents", &split_cursor_p, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
 
-            params->cents_mul = calc_cents_mul(params->cents);
-
-            e = pthread_rwlock_unlock(&params->rw);
-            if (e != 0) {
-                // TODO: Log
-                return;
-            }
-        }
+        draw_toggle("Rand Phase", &split_cursor_p, &osc->voice_arr.rand_phase, &osc->voice_arr.rw);
 
         split_cursor_p = cursor_p_r2;
         draw_knob_i("Unison", &split_cursor_p, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, &params->rw);
