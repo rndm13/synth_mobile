@@ -240,6 +240,11 @@ static int write_ini_file(Synth *s, const char* filepath) {
         if (e != 0) {
             goto close_file;
         }
+
+        e = write_ini_value_f(file, fparams->env2_int, cur_section, "env2_int");
+        if (e != 0) {
+            goto close_file;
+        }
     }
 
     {
@@ -329,6 +334,7 @@ int save_program(Synth *s, ProgramSelection* ps) {
     pthread_rwlock_rdlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_rdlock(&s->env_arr[0].rw);
     pthread_rwlock_rdlock(&s->env_arr[1].rw);
+    pthread_rwlock_rdlock(&s->env_arr[2].rw);
     pthread_rwlock_rdlock(&s->flt.params.rw);
     pthread_rwlock_rdlock(&s->params.rw);
 
@@ -340,6 +346,7 @@ int save_program(Synth *s, ProgramSelection* ps) {
     pthread_rwlock_unlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_unlock(&s->env_arr[0].rw);
     pthread_rwlock_unlock(&s->env_arr[1].rw);
+    pthread_rwlock_unlock(&s->env_arr[2].rw);
     pthread_rwlock_unlock(&s->flt.params.rw);
     pthread_rwlock_unlock(&s->params.rw);
 
@@ -387,6 +394,7 @@ static int read_ini_value(
         MATCH_F(params->cutoff, cur_section, "cutoff", section, name, value);
         MATCH_F(params->resonance, cur_section, "resonance", section, name, value);
         MATCH_F(params->gain, cur_section, "gain", section, name, value);
+        MATCH_F(params->env2_int, cur_section, "env2_int", section, name, value);
     }
 
     {
@@ -429,6 +437,7 @@ int open_program(Synth *s, const ProgramSelection* ps) {
     pthread_rwlock_wrlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_wrlock(&s->env_arr[0].rw);
     pthread_rwlock_wrlock(&s->env_arr[1].rw);
+    pthread_rwlock_wrlock(&s->env_arr[2].rw);
     pthread_rwlock_wrlock(&s->flt.params.rw);
     pthread_rwlock_wrlock(&s->params.rw);
 
@@ -440,12 +449,13 @@ int open_program(Synth *s, const ProgramSelection* ps) {
     pthread_rwlock_unlock(&s->osc_arr[1].voice_arr.rw);
     pthread_rwlock_unlock(&s->env_arr[0].rw);
     pthread_rwlock_unlock(&s->env_arr[1].rw);
+    pthread_rwlock_unlock(&s->env_arr[2].rw);
     pthread_rwlock_unlock(&s->flt.params.rw);
     pthread_rwlock_unlock(&s->params.rw);
 
-    prepare_osc_display_buffer(&s->osc_arr[0]);
-    prepare_osc_display_buffer(&s->osc_arr[1]);
-    prepare_filter(&s->flt);
+    prepare_osc_display(&s->osc_arr[0]);
+    prepare_osc_display(&s->osc_arr[1]);
+    prepare_filter_display(&s->flt);
 
     return e;
 }
@@ -466,7 +476,7 @@ void randomize_program(Synth *s) {
 
         pthread_rwlock_unlock(&params->rw);
 
-        prepare_osc_display_buffer(&s->osc_arr[i]);
+        prepare_osc_display(&s->osc_arr[i]);
     }
 
     for (size_t i = 0; i < ARRAY_SIZE(s->env_arr); i++) {
@@ -492,7 +502,7 @@ void randomize_program(Synth *s) {
 
         pthread_rwlock_unlock(&params->rw);
 
-        prepare_filter(&s->flt);
+        prepare_filter_display(&s->flt);
     }
 
     {

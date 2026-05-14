@@ -272,14 +272,16 @@ void draw_profiling_stats() {
                 "dist: %dms\n"
                 "delay: %dms\n"
                 "amp: %dms\n"
-                "total: %dms\n",
+                "total: %dms\n"
+                "stage: %zu\n",
                 NS_TO_MS(g_a.s.prof.osc_time[0].tv_nsec),
                 NS_TO_MS(g_a.s.prof.osc_time[1].tv_nsec),
                 NS_TO_MS(g_a.s.prof.flt_time.tv_nsec),
                 NS_TO_MS(g_a.s.prof.distortion_time.tv_nsec),
                 NS_TO_MS(g_a.s.prof.delay_time.tv_nsec),
                 NS_TO_MS(g_a.s.prof.amp_time.tv_nsec),
-                NS_TO_MS(g_a.s.prof.total_time.tv_nsec)),
+                NS_TO_MS(g_a.s.prof.total_time.tv_nsec),
+                g_a.s.prof.cur_stage),
             GUI_GAP, GUI_GAP + FONT_SIZE,
             FONT_SIZE, RED);
 }
@@ -287,14 +289,21 @@ void draw_profiling_stats() {
 void draw_voice_arr() {
     Osc* osc = &g_a.s.osc_arr[0];
     pthread_rwlock_rdlock(&osc->voice_arr.rw);
+    OscVoice* last = osc_voice_get_last(&osc->voice_arr);
+    int k_idx = 0;
+    int unison = 0;
+    float start_time = 0.0f;
+    float release_time = 0.0f;
+    float env = 0.0f;
+    int wave_idx = 0;
 
     for (int i = 0; i < osc->voice_arr.osc_voice_count; i++) {
-        int k_idx = osc->voice_arr.osc_voice_arr[i].voice.key_idx;
-        int unison = osc->voice_arr.osc_voice_arr[i].unison_idx;
-        float start_time = osc->voice_arr.osc_voice_arr[i].start_time;
-        float release_time = osc->voice_arr.osc_voice_arr[i].release_time;
-        float env = osc->voice_arr.osc_voice_arr[i].last_env;
-        int wave_idx = osc->voice_arr.osc_voice_arr[i].wave_idx;
+        k_idx = osc->voice_arr.osc_voice_arr[i].voice.key_idx;
+        unison = osc->voice_arr.osc_voice_arr[i].unison_idx;
+        start_time = osc->voice_arr.osc_voice_arr[i].start_time;
+        release_time = osc->voice_arr.osc_voice_arr[i].release_time;
+        env = osc->voice_arr.osc_voice_arr[i].last_env;
+        wave_idx = osc->voice_arr.osc_voice_arr[i].wave_idx;
 
         DrawText(
                 TextFormat(
@@ -302,6 +311,22 @@ void draw_voice_arr() {
                     k_idx, unison, GetTime() - start_time,
                     release_time - start_time, env, wave_idx),
                 GUI_GAP, GUI_GAP + FONT_SIZE * i,
+                FONT_SIZE, RED);
+    }
+
+    if (last != NULL) {
+        k_idx = last->voice.key_idx;
+        unison = last->unison_idx;
+        start_time = last->start_time;
+        release_time = last->release_time;
+        env = last->last_env;
+        wave_idx = last->wave_idx;
+        DrawText(
+                TextFormat(
+                    "LAST: key: %d, u: %d, t: %.2f, r: %.2f, env: %.2f, w: %d",
+                    k_idx, unison, GetTime() - start_time,
+                    release_time - start_time, env, wave_idx),
+                GUI_GAP, GUI_GAP + FONT_SIZE * osc->voice_arr.osc_voice_count,
                 FONT_SIZE, RED);
     }
 
@@ -432,7 +457,7 @@ void draw_tab_osc(Vector2* cursor_p) {
                 return;
             }
 
-            prepare_osc_display_buffer(osc);
+            prepare_osc_display(osc);
         }
 
         // 2nd Row
@@ -459,16 +484,26 @@ void draw_tab_osc(Vector2* cursor_p) {
 }
 
 void draw_tab_env(Vector2* cursor_p) {
+    const char *label_arr[] = {
+        "ENV0 -> OSC0",
+        "ENV1 -> OSC1",
+        "ENV2 -> FLT0",
+    };
     Vector2 wave_s = {(GetScreenWidth() - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
+    Env *env = NULL;
+    Vector2 split_cursor_p = {0};
 
     for (size_t i = 0; i < ARRAY_SIZE(g_a.s.env_arr); i++) {
-        Env *env = &g_a.s.env_arr[i];
-        Vector2 split_cursor_p = {cursor_p->x + i * (wave_s.x + GUI_GAP), cursor_p->y};
+        env = &g_a.s.env_arr[i];
+        split_cursor_p.x = cursor_p->x + (i % 2) * (wave_s.x + GUI_GAP);
+        split_cursor_p.y = cursor_p->y + (i / 2) * (FONT_SIZE + KNOB_SIZE_H + 3 * GUI_GAP);
 
         push_gui_id_i(i);
 
+        set_gui_dir(GD_VERTICAL);
+        draw_text(label_arr[i], &split_cursor_p);
+
         set_gui_dir(GD_HORIZONTAL);
-        // TODO: Env wave
         draw_knob("Attack", &split_cursor_p, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
         draw_knob("Decay", &split_cursor_p, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
         draw_knob("Sustain", &split_cursor_p, &env->sustain, 0.0f, 1.0f, &env->rw);
@@ -511,19 +546,10 @@ void draw_tab_filter(Vector2* cursor_p) {
     set_gui_dir(GD_HORIZONTAL);
     changed |= draw_knob("Resonance", cursor_p, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
     changed |= draw_knob("Gain", cursor_p, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
+    changed |= draw_knob("ENV2 Intensity", cursor_p, &params->env2_int, FLT_INT_MIN, FLT_INT_MAX, &params->rw);
 
-    if (g_a.show_debug) {
-        DrawText(TextFormat("a0:%f b0:%f\na1:%f b1:%f\na2:%f b2:%f",
-                params->a[0], params->b[0],
-                params->a[1], params->b[1],
-                params->a[2], params->b[2]),
-                cursor_p->x, cursor_p->y, FONT_SIZE, TEXT_COLOR);
-        cursor_p->y += FONT_SIZE + GUI_GAP;
-    }
-
-    // Right now this is a bit dumb, IMO there should be a copied struct.
     if (changed) {
-        prepare_filter(&g_a.s.flt);
+        prepare_filter_display(&g_a.s.flt);
     }
 }
 

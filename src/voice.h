@@ -69,4 +69,5 @@ void osc_voice_remove(OscVoiceArr *ov, int ov_idx);
 void osc_voice_add(OscVoiceArr *ov, Voice v, float time);
 void osc_voice_add_unison(OscVoiceArr *ov, Voice v, size_t cnt, float time);
 void osc_voice_release(OscVoiceArr *ov, int k_idx, float time);
+OscVoice* osc_voice_get_last(OscVoiceArr *ov);
 void osc_voice_gc(OscVoiceArr *ov);

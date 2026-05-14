@@ -14,71 +14,74 @@ const char* ft2str(FilterType ft) {
     return "Unknown";
 }
 
-void prepare_filter_params(Filter* flt) {
-    FilterParams* params = &flt->params;
-
-    int e = pthread_rwlock_wrlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
+void calc_biquad_filter_params(FilterParams* params, BiquadFilterParams* o_biquad) {
+    double norm = 0.0;
+    // int e = pthread_rwlock_rdlock(&params->rw);
+    // if (e != 0) {
+    //     // TODO: Log
+    //     return;
+    // }
 
     // double V = powf(10, fabs(params->gain) / 20);
     double K = tan(PI * params->cutoff / (double)FLT_OVERSAMPLED_RATE);
 
-    params->a[0] = 1;
+    o_biquad->a[0] = 1;
     switch (params->type) {
         case FT_LPF:
-            params->norm = 1 / (1 + K / params->resonance + K * K);
-            params->b[0] = K * K * params->norm;
-            params->b[1] = 2 * params->b[0];
-            params->b[2] = params->b[0];
-            params->a[1] = 2 * (K * K - 1) * params->norm;
-            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
+            norm = 1 / (1 + K / params->resonance + K * K);
+            o_biquad->b[0] = K * K * norm;
+            o_biquad->b[1] = 2 * o_biquad->b[0];
+            o_biquad->b[2] = o_biquad->b[0];
+            o_biquad->a[1] = 2 * (K * K - 1) * norm;
+            o_biquad->a[2] = (1 - K / params->resonance + K * K) * norm;
             break;
 
         case FT_HPF:
-            params->norm = 1 / (1 + K / params->resonance + K * K);
-            params->b[0] = 1 * params->norm;
-            params->b[1] = -2 * params->b[0];
-            params->b[2] = params->b[0];
-            params->a[1] = 2 * (K * K - 1) * params->norm;
-            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
+            norm = 1 / (1 + K / params->resonance + K * K);
+            o_biquad->b[0] = 1 * norm;
+            o_biquad->b[1] = -2 * o_biquad->b[0];
+            o_biquad->b[2] = o_biquad->b[0];
+            o_biquad->a[1] = 2 * (K * K - 1) * norm;
+            o_biquad->a[2] = (1 - K / params->resonance + K * K) * norm;
             break;
 
         case FT_BPF:
-            params->norm = 1 / (1 + K / params->resonance + K * K);
-            params->b[0] = K / params->resonance * params->norm;
-            params->b[1] = 0;
-            params->b[2] = -params->b[0];
-            params->a[1] = 2 * (K * K - 1) * params->norm;
-            params->a[2] = (1 - K / params->resonance + K * K) * params->norm;
+            norm = 1 / (1 + K / params->resonance + K * K);
+            o_biquad->b[0] = K / params->resonance * norm;
+            o_biquad->b[1] = 0;
+            o_biquad->b[2] = -o_biquad->b[0];
+            o_biquad->a[1] = 2 * (K * K - 1) * norm;
+            o_biquad->a[2] = (1 - K / params->resonance + K * K) * norm;
             break;
 
         case FT_DISABLED:
-            params->norm = 0;
-            params->b[0] = 0;
-            params->b[1] = 0;
-            params->b[2] = 0;
-            params->a[1] = 0;
-            params->a[2] = 0;
+            norm = 0;
+            o_biquad->b[0] = 0;
+            o_biquad->b[1] = 0;
+            o_biquad->b[2] = 0;
+            o_biquad->a[1] = 0;
+            o_biquad->a[2] = 0;
             break;
 
         default:
             break;
     }
 
-    e = pthread_rwlock_unlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
+    // e = pthread_rwlock_unlock(&params->rw);
+    // if (e != 0) {
+    //     // TODO: Log
+    //     return;
+    // }
 }
 
 void prepare_filter_display(Filter* flt) {
     FilterParams* params = &flt->params;
+    BiquadFilterParams biquad = {0};
+    int e = 0;
 
-    int e = pthread_rwlock_rdlock(&params->rw);
+    calc_biquad_filter_params(params, &biquad);
+
+    e = pthread_rwlock_wrlock(&params->rw);
     if (e != 0) {
         // TODO: Log
         return;
@@ -99,16 +102,16 @@ void prepare_filter_display(Filter* flt) {
         double complex z2 = cexp(-I * 2.0 * w);
 
         // H(z) = (b0 + b1*z^-1 + b2*z^-2) / (a0 + a1*z^-1 + a2*z^-2)
-        double complex num = params->a[0] + params->a[1] * z1 + params->a[2] * z2;
-        double complex den = params->b[0] + params->b[1] * z1 + params->b[2] * z2;
+        double complex num = biquad.a[0] + biquad.a[1] * z1 + biquad.a[2] * z2;
+        double complex den = biquad.b[0] + biquad.b[1] * z1 + biquad.b[2] * z2;
 
-        double nMag = cabs(num);
-        double dMag = cabs(den);
+        double n_mag = cabs(num);
+        double d_mag = cabs(den);
 
-        if (dMag < EPSILON) {
+        if (d_mag < EPSILON) {
             flt->disp_buffer[i] = -1.0f;
         } else {
-            double magnitude = nMag / dMag;
+            double magnitude = n_mag / d_mag;
 
             flt->disp_buffer[i] = Clamp(-log10f(magnitude), -1, 1);
         }
@@ -119,71 +122,6 @@ void prepare_filter_display(Filter* flt) {
         // TODO: Log
         return;
     }
-}
-
-void prepare_filter(Filter* flt) {
-    prepare_filter_params(flt);
-    prepare_filter_display(flt);
-}
-
-void update_filter(Filter* flt, float* buffer, size_t n) {
-    // int e = pthread_rwlock_rdlock(&flt->params.rw);
-    // if (e != 0) {
-    //     // TODO: Log
-    //     return;
-    // }
-
-    if (flt->params.type == FT_DISABLED) {
-        for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
-            flt->x[i] = 0;
-        }
-
-        for (size_t i = 0; i < ARRAY_SIZE(flt->y); i++) {
-            flt->y[i] = 0;
-        }
-
-        for (size_t i = 0; i < ARRAY_SIZE(flt->fir_down.history); i++) {
-            flt->fir_down.history[i] = 0;
-        }
-
-        for (size_t i = 0; i < ARRAY_SIZE(flt->fir_up.history); i++) {
-            flt->fir_up.history[i] = 0;
-        }
-
-        goto unlock;
-    }
-
-    upsample_filter_u(flt, buffer, n);
-
-    // Converts the buffer data before using it
-    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
-        // Move old state
-        flt->y[2] = flt->y[1];
-        flt->y[1] = flt->y[0];
-        flt->x[2] = flt->x[1];
-        flt->x[1] = flt->x[0];
-
-        flt->x[0] = flt->oversampled_buffer[i];
-        flt->y[0] =
-            flt->params.b[0] * flt->x[0] +
-            flt->params.b[1] * flt->x[1] +
-            flt->params.b[2] * flt->x[2] -
-            flt->params.a[1] * flt->y[1] -
-            flt->params.a[2] * flt->y[2] +
-            EPSILON; // Anti-denormal offset
-
-        flt->oversampled_buffer[i] = flt->y[0];
-    }
-
-    downsample_filter_u(flt, buffer, n);
-
-unlock:
-    // e = pthread_rwlock_unlock(&flt->params.rw);
-    // if (e != 0) {
-    //     // TODO: Log
-    //     return;
-    // }
-    return;
 }
 
 float update_fir_filter(FIRFilter *fir, float input) {
@@ -256,14 +194,17 @@ void init_filter(Filter *flt) {
     if (e != 0) {
         return;
     }
+
     flt->params.type = FT_LPF;
     flt->params.cutoff = FLT_CUTOFF_MAX;
     flt->params.resonance = FLT_RESONANCE_MIN;
     flt->params.gain = 0.0f;
+    flt->params.env2_int = 0.0f;
+
     init_fir_filter(&flt->fir_up, FLT_OVERSAMPLED_RATE);
     init_fir_filter(&flt->fir_down, FLT_OVERSAMPLED_RATE);
 
-    prepare_filter(flt);
+    prepare_filter_display(flt);
 }
 
 void deinit_filter(Filter *flt) {

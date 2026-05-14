@@ -45,8 +45,8 @@ void osc_add_voice(Osc* osc, Voice new_voice, float time) {
     osc_voice_add_unison(&osc->voice_arr, new_voice, unison, time);
 }
 
-void prepare_osc_display_buffer(Osc* osc) {
-    int e = pthread_rwlock_rdlock(&osc->params.rw);
+void prepare_osc_display(Osc* osc) {
+    int e = pthread_rwlock_wrlock(&osc->params.rw);
     if (e != 0) {
         // TODO: Log
         return;
@@ -86,7 +86,7 @@ void init_osc(Osc* osc) {
     osc->params.detune = OSC_DETUNE_MIN;
     osc->params.volume = 1.0f;
 
-    prepare_osc_display_buffer(osc);
+    prepare_osc_display(osc);
 }
 
 void deinit_osc(Osc* osc) {

@@ -20,6 +20,7 @@ typedef struct SynthProfiling {
     timespec_t delay_time;
     timespec_t amp_time;
     timespec_t total_time;
+    size_t     cur_stage;
 } SynthProfiling;
 
 typedef struct Distortion {

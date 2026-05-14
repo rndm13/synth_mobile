@@ -31,7 +31,7 @@
 #define ENV_R_MIN 0.2f
 #define ENV_R_MAX 5.0f
 
-#define ENV_COUNT    2
+#define ENV_COUNT    3
 #define OSC_COUNT    2
 
 #define FLT_SAFE_CUTOFF_COEF 0.45
@@ -43,10 +43,15 @@
 
 #define FLT_CUTOFF_MIN       100.0f
 #define FLT_CUTOFF_MAX       (SAMPLE_RATE * FLT_SAFE_CUTOFF_COEF)
+
 #define FLT_RESONANCE_MIN    0.71f
 #define FLT_RESONANCE_MAX    20.0f
+
 #define FLT_GAIN_MIN         -20.0f
 #define FLT_GAIN_MAX         20.0f
+
+#define FLT_INT_MIN          -1000.0f
+#define FLT_INT_MAX          +1000.0f
 
 #define DISPLAY_BUFFER_SIZE 256
 #define BUFFER_SIZE         4096
@@ -69,6 +74,7 @@
 #define PROGRAM_EXTENSION     ".ini"
 #define INI_SECTION_CAPACITY  20
 
+#define LABEL_CAPACITY        256
 #define ERR_MSG_CAPACITY      256
 
 typedef struct timespec timespec_t;

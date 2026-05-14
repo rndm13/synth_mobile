@@ -1,7 +1,9 @@
 #include "synth.h"
 
+#include "src/filter.h"
 #include "src/osc.h"
 #include "src/settings.h"
+#include "src/voice.h"
 #include "stdlib.h"
 #include "raymath.h"
 
@@ -159,17 +161,73 @@ params_unlock:
     }
 }
 
-timespec_t duration_from(timespec_t start_time) {
-    timespec_t end_time = {0};
-    timespec_get(&end_time, TIME_UTC);
+void update_filter(Filter* flt, Env* env, OscVoice* last_osc_voice, float global_time, float* buffer, size_t n) {
+    FilterParams params = flt->params;
+    BiquadFilterParams biquad = {};
+    float env_val = 0.0f;
+    float time = 0.0f;
+    float release_time = 0.0f;
 
-    end_time.tv_sec -= start_time.tv_sec;
-    end_time.tv_nsec -= start_time.tv_nsec;
+    if (params.type == FT_DISABLED) {
+        for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
+            flt->x[i] = 0;
+        }
 
-    end_time.tv_nsec += S_TO_NS(end_time.tv_sec);
-    end_time.tv_sec = 0;
+        for (size_t i = 0; i < ARRAY_SIZE(flt->y); i++) {
+            flt->y[i] = 0;
+        }
 
-    return end_time;
+        for (size_t i = 0; i < ARRAY_SIZE(flt->fir_down.history); i++) {
+            flt->fir_down.history[i] = 0;
+        }
+
+        for (size_t i = 0; i < ARRAY_SIZE(flt->fir_up.history); i++) {
+            flt->fir_up.history[i] = 0;
+        }
+
+        return;
+    }
+
+    if (NULL != last_osc_voice) {
+        time = global_time - last_osc_voice->start_time;
+        release_time = last_osc_voice->release_time - last_osc_voice->start_time;
+
+        env_val = calc_env_value(
+                time, last_osc_voice->released,
+                release_time, flt->last_env, env);
+        if (!last_osc_voice->released) {
+            flt->last_env = env_val;
+        }
+
+        params.cutoff = Clamp(env_val * params.env2_int + params.cutoff,
+                FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
+    }
+
+    calc_biquad_filter_params(&params, &biquad);
+
+    upsample_filter_u(flt, buffer, n);
+
+    // Converts the buffer data before using it
+    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
+        // Move old state
+        flt->y[2] = flt->y[1];
+        flt->y[1] = flt->y[0];
+        flt->x[2] = flt->x[1];
+        flt->x[1] = flt->x[0];
+
+        flt->x[0] = flt->oversampled_buffer[i];
+        flt->y[0] =
+            biquad.b[0] * flt->x[0] +
+            biquad.b[1] * flt->x[1] +
+            biquad.b[2] * flt->x[2] -
+            biquad.a[1] * flt->y[1] -
+            biquad.a[2] * flt->y[2] +
+            EPSILON; // Anti-denormal offset
+
+        flt->oversampled_buffer[i] = flt->y[0];
+    }
+
+    downsample_filter_u(flt, buffer, n);
 }
 
 void update_distortion(Distortion* d, float* buffer, size_t n) {
@@ -263,7 +321,21 @@ void update_synth_amp(Synth* s, float* buffer, size_t n) {
     }
 }
 
+timespec_t duration_from(timespec_t start_time) {
+    timespec_t end_time = {0};
+    timespec_get(&end_time, TIME_UTC);
+
+    end_time.tv_sec -= start_time.tv_sec;
+    end_time.tv_nsec -= start_time.tv_nsec;
+
+    end_time.tv_nsec += S_TO_NS(end_time.tv_sec);
+    end_time.tv_sec = 0;
+
+    return end_time;
+}
+
 void update_synth(Synth* s, float global_time, float* buffer, size_t n) {
+    OscVoice* ov = osc_voice_get_last(&s->osc_arr[0].voice_arr);
     timespec_t start_time = {0};
     timespec_t section_time = {0};
 
@@ -271,31 +343,38 @@ void update_synth(Synth* s, float global_time, float* buffer, size_t n) {
         buffer[i] = 0.0f;
     }
 
+    s->prof.cur_stage = 0;
     timespec_get(&start_time, TIME_UTC);
 
     timespec_get(&section_time, TIME_UTC);
     update_osc(&s->osc_arr[0], &s->env_arr[0], global_time, buffer, n);
     s->prof.osc_time[0] = duration_from(section_time);
+    s->prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
     update_osc(&s->osc_arr[1], &s->env_arr[1], global_time, buffer, n);
     s->prof.osc_time[1] = duration_from(section_time);
+    s->prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
-    update_filter(&s->flt, buffer, n);
+    update_filter(&s->flt, &s->env_arr[2], ov, global_time, buffer, n);
     s->prof.flt_time = duration_from(section_time);
+    s->prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
     update_distortion(&s->distortion, buffer, n);
     s->prof.distortion_time = duration_from(section_time);
+    s->prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
     update_delay(&s->delay, buffer, n);
     s->prof.delay_time = duration_from(section_time);
+    s->prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
     update_synth_amp(s, buffer, n);
     s->prof.amp_time = duration_from(section_time);
+    s->prof.cur_stage++;
 
     s->prof.total_time = duration_from(start_time);
 }

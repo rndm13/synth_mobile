@@ -185,6 +185,22 @@ void osc_voice_release(OscVoiceArr *ov, int k_idx, float time) {
     pthread_rwlock_unlock(&ov->rw);
 }
 
+OscVoice* osc_voice_get_last(OscVoiceArr *ov) {
+    size_t max_start_time_idx = 0;
+    for (size_t i = 1; i < ov->osc_voice_count; i++) {
+        if (ov->osc_voice_arr[i].start_time >
+            ov->osc_voice_arr[max_start_time_idx].start_time) {
+            max_start_time_idx = i;
+        }
+    }
+
+    if (max_start_time_idx >= ov->osc_voice_count) {
+        return NULL;
+    }
+
+    return &ov->osc_voice_arr[max_start_time_idx];
+}
+
 void osc_voice_gc(OscVoiceArr *ov) {
     pthread_rwlock_rdlock(&ov->rw);
 

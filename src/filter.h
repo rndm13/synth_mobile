@@ -24,13 +24,14 @@ typedef struct FilterParams {
     FilterType type;
     float cutoff;
     float resonance;
+    float env2_int;
     float gain;
+} FilterParams;
 
-    // Parameters calculated when any of the arguments are changed
-    double norm;
+typedef struct BiquadFilterParams {
     double a[3]; // Poles
     double b[3]; // Zeros
-} FilterParams;
+} BiquadFilterParams;
 
 typedef struct FIRFilter {
     float coeffs[FLT_FIR_TAPS];
@@ -48,16 +49,15 @@ typedef struct Filter {
     double y[3];
     FIRFilter fir_up;
     FIRFilter fir_down;
+    float last_env;
 
     // Filter output
     float disp_buffer[DISPLAY_BUFFER_SIZE];
     float oversampled_buffer[BUFFER_SIZE * FLT_OVERSAMPLING];
 } Filter;
 
-void prepare_filter_params(Filter* flt);
+void calc_biquad_filter_params(FilterParams* flt, BiquadFilterParams* o_biquad);
 void prepare_filter_display(Filter* flt);
-void prepare_filter(Filter* flt);
-void update_filter(Filter* flt, float* buffer, size_t n);
 
 float update_fir_filter(FIRFilter *fir, float input);
 void upsample_filter_u(Filter* flt, float* buffer, size_t n);

@@ -40,7 +40,7 @@ typedef struct Osc {
 
 float calc_osc_value(OscType type, int wave_idx, int wave_length);
 void osc_add_voice(Osc* osc, Voice new_voice, float time);
-void prepare_osc_display_buffer(Osc* osc);
+void prepare_osc_display(Osc* osc);
 float calc_semi_mul(int semi);
 float calc_cents_mul(float cents);
 void init_osc(Osc* osc);
