@@ -516,14 +516,19 @@ void draw_tab_env(Vector2* cursor_p) {
         "ENV1 -> OSC1",
         "ENV2 -> FLT0",
     };
-    Vector2 wave_s = {(GetScreenWidth() - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H};
+    Vector2 wave_s = {
+        (GetScreenWidth() - 2 * GUI_GAP) / 2.0f - GUI_GAP,
+        FONT_SIZE + KNOB_SIZE_H + 2 * GUI_GAP
+    };
     Env *env = NULL;
     Vector2 split_cursor_p = {0};
+    bool updated = false;
 
     for (size_t i = 0; i < ARRAY_SIZE(g_a.s.env_arr); i++) {
+        updated = false;
         env = &g_a.s.env_arr[i];
         split_cursor_p.x = cursor_p->x + (i % 2) * (wave_s.x + GUI_GAP);
-        split_cursor_p.y = cursor_p->y + (i / 2) * (FONT_SIZE + KNOB_SIZE_H + 3 * GUI_GAP);
+        split_cursor_p.y = cursor_p->y + (i / 2) * (wave_s.y + GUI_GAP);
 
         push_gui_id_i(i);
 
@@ -531,13 +536,24 @@ void draw_tab_env(Vector2* cursor_p) {
         draw_text(label_arr[i], &split_cursor_p);
 
         set_gui_dir(GD_HORIZONTAL);
-        draw_knob("Attack", &split_cursor_p, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
-        draw_knob("Decay", &split_cursor_p, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
-        draw_knob("Sustain", &split_cursor_p, &env->sustain, 0.0f, 1.0f, &env->rw);
-        draw_knob("Release", &split_cursor_p, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
+        updated |= draw_knob("Attack", &split_cursor_p, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
+        updated |= draw_knob("Decay", &split_cursor_p, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
+        updated |= draw_knob("Sustain", &split_cursor_p, &env->sustain, 0.0f, 1.0f, &env->rw);
+        updated |= draw_knob("Release", &split_cursor_p, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
+
+        if (updated) {
+            prepare_env_display(env);
+        }
 
         pop_gui_id();
     }
+
+    split_cursor_p.x = cursor_p->x + wave_s.x + GUI_GAP;
+    split_cursor_p.y = cursor_p->y + wave_s.y + GUI_GAP;
+
+    draw_wave(
+            "ENV0 Wave", &split_cursor_p, wave_s,
+            g_a.s.env_arr[0].disp_buffer, DISPLAY_BUFFER_SIZE, 0);
 }
 
 void draw_tab_filter(Vector2* cursor_p) {

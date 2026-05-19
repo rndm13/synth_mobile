@@ -53,7 +53,7 @@
 #define FLT_INT_MIN          -1000.0f
 #define FLT_INT_MAX          +1000.0f
 
-#define DISPLAY_BUFFER_SIZE 256
+#define DISPLAY_BUFFER_SIZE 512
 #define BUFFER_SIZE         4096
 #define FFT_BUFFER_SIZE_MUL 2
 #define FFT_BUFFER_SIZE     (BUFFER_SIZE * FFT_BUFFER_SIZE_MUL)

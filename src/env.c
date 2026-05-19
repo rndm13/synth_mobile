@@ -65,8 +65,42 @@ void init_env(Env* env) {
     env->decay = ENV_D_MIN;
     env->sustain = 1.0f;
     env->release = ENV_R_MIN;
+
+    prepare_env_display(env);
 }
 
 void deinit_env(Env* env) {
     pthread_rwlock_destroy(&env->rw);
+}
+
+void prepare_env_display(Env* env) {
+    int e = 0;
+    size_t i = 0;
+    bool released = false;
+    float time = 0;
+    const float total_time = ENV_A_MAX + ENV_D_MAX + ENV_R_MAX;
+
+    e = pthread_rwlock_rdlock(&env->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+
+    for (i = 0; i < ARRAY_SIZE(env->disp_buffer); i++) {
+        time = total_time * i / (float)DISPLAY_BUFFER_SIZE;
+
+        released = time >= env->attack + env->decay;
+        env->disp_buffer[i] = 1.8 * calc_env_value(
+                time, released, env->attack + env->decay,
+                env->sustain, env) - 0.9;
+    }
+
+    e = pthread_rwlock_unlock(&env->rw);
+    if (e != 0) {
+        // TODO: Log
+        return;
+    }
+
+    return;
 }
