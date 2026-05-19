@@ -11,6 +11,6 @@ typedef struct Env {
     float release;
 } Env;
 
-float calc_env_value(float time, bool released, float release_time, float last_env, Env *env);
+float calc_env_value(double time, bool released, double release_time, float last_env, Env *env);
 void init_env(Env* env);
 void deinit_env(Env* env);

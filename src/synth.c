@@ -79,18 +79,18 @@ void synth_gc_voice(Synth* s) {
     }
 }
 
-void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float global_time, float wave_freq, float* buffer, size_t n) {
+void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, double global_time, float wave_freq, float* buffer, size_t n) {
     Voice voice = osc_voice->voice;
 
     float vel_mul = voice.velocity / MAX_VELOCITY;
-    float time = global_time - osc_voice->start_time;
-    float release_time = osc_voice->release_time - osc_voice->start_time;
-    float env_val = 0;
+    double time = global_time - osc_voice->start_time;
+    double release_time = osc_voice->release_time - osc_voice->start_time;
+    float env_val = 1.0f;
 
     for (int j = 0; j < n; j++) {
         float wave_length = SAMPLE_RATE / wave_freq;
-        float dt = j / (float)SAMPLE_RATE;
-        float kernel = calc_osc_value(osc->params.type, osc_voice->wave_idx, wave_length);
+        double dt = j / (float)SAMPLE_RATE;
+        float osc_value = calc_osc_value(osc->params.type, osc_voice->wave_idx, wave_length);
 
         env_val = calc_env_value(
                 time + dt, osc_voice->released,
@@ -99,7 +99,7 @@ void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float globa
             osc_voice->last_env = env_val;
         }
 
-        buffer[j] += osc->params.volume * env_val * vel_mul * kernel;
+        buffer[j] += osc->params.volume * env_val * vel_mul * osc_value;
         osc_voice->wave_idx++;
         if (osc_voice->wave_idx >= wave_length) {
             osc_voice->wave_idx = 0;
@@ -107,7 +107,7 @@ void update_osc_voice(const Osc* osc, Env* env, OscVoice* osc_voice, float globa
     }
 }
 
-void update_osc(Osc* osc, Env* env, float global_time, float* buffer, size_t n) {
+void update_osc(Osc* osc, Env* env, double global_time, float* buffer, size_t n) {
     OscVoiceArr *ova = &osc->voice_arr;
     OscVoice *osc_voice = NULL;
     Voice voice = {};
@@ -161,7 +161,7 @@ params_unlock:
     }
 }
 
-void update_filter(Filter* flt, Env* env, OscVoice* last_osc_voice, float global_time, float* buffer, size_t n) {
+void update_filter(Filter* flt, Env* env, OscVoice* last_osc_voice, double global_time, float* buffer, size_t n) {
     FilterParams params = flt->params;
     BiquadFilterParams biquad = {};
     float env_val = 0.0f;
@@ -334,7 +334,7 @@ timespec_t duration_from(timespec_t start_time) {
     return end_time;
 }
 
-void update_synth(Synth* s, float global_time, float* buffer, size_t n) {
+void update_synth(Synth* s, double global_time, float* buffer, size_t n) {
     OscVoice* ov = osc_voice_get_last(&s->osc_arr[0].voice_arr);
     timespec_t start_time = {0};
     timespec_t section_time = {0};

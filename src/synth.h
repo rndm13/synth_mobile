@@ -62,4 +62,4 @@ void deinit_synth(Synth* s);
 void synth_add_voice(Synth* s, Voice new_voice, float time);
 void synth_release_voice(Synth* s, int k_idx, float time);
 void synth_gc_voice(Synth* s);
-void update_synth(Synth* s, float time, float* buffer, size_t n);
+void update_synth(Synth* s, double global_time, float* buffer, size_t n);

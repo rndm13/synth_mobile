@@ -1,14 +1,15 @@
 #include "env.h"
 
-#include <math.h>
-#include "settings.h"
+#include "utils.h"
 
-float calc_env_value(float time, bool released, float release_time, float last_env, Env *env) {
+float calc_env_value(double time, bool released, double release_time, float release_start_env, Env *env) {
     float result = 0.0f;
     float time_in_release = time - release_time;
-    float time_in_decay = time - env->attack;
-    float decay_progress = time_in_decay / env->decay;
-    int e = pthread_rwlock_rdlock(&env->rw);
+    float time_in_decay = 0.0f;
+    float decay_progress = 0.0f;
+    int e = 0;
+
+    e = pthread_rwlock_rdlock(&env->rw);
     if (e != 0) {
         // TODO: Log
         return result;
@@ -22,7 +23,7 @@ float calc_env_value(float time, bool released, float release_time, float last_e
             goto unlock;
         }
 
-        result = last_env * (1.0f - (time_in_release / env->release));
+        result = release_start_env * (1.0f - (time_in_release / env->release));
 
         goto unlock;
     }
@@ -34,6 +35,8 @@ float calc_env_value(float time, bool released, float release_time, float last_e
     }
 
     // 3. Decay Phase
+    time_in_decay = time - env->attack;
+    decay_progress = time_in_decay / env->decay;
     if (time_in_decay < env->decay) {
         result = 1.0f - (decay_progress * (1.0f - env->sustain));
         goto unlock;
