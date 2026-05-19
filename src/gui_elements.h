@@ -19,6 +19,7 @@
 #define KEY_HEIGHT                           100
 #define KEY_WHITE_COLOR                      COL_AC1
 #define KEY_BLACK_COLOR                      COL_AC2
+#define KEY_DOWN_COLOR                       COL_BG2
 #define KEY_LINE_COLOR                       COL_BG2
 #define KEY_LINE_THICKNESS                   2.0f
 

@@ -333,7 +333,22 @@ void draw_voice_arr() {
     pthread_rwlock_unlock(&osc->voice_arr.rw);
 }
 
-void draw_keys() {
+void draw_synth_keyboard() {
+    static Vector2 touch_pos_arr[MAX_TOUCH_POINTS] = { 0 };
+    int t_count = GetTouchPointCount();
+
+    // Clamp touch points available ( set the maximum touch points allowed )
+    if (t_count > MAX_TOUCH_POINTS) {
+        t_count = MAX_TOUCH_POINTS;
+    }
+
+    // Get touch points positions
+    for (int i = 0; i < t_count; i++) {
+        touch_pos_arr[i] = GetTouchPosition(i);
+    }
+
+    bool clicked = false;
+
     for (int i = 0; i < KEY_COUNT; i++) {
         Rectangle key_rec = g_a.skeyboard.key_rect_arr[i];
 
@@ -346,6 +361,18 @@ void draw_keys() {
         if (key_is_black(i)) {
             k_color = KEY_BLACK_COLOR;
             t_color = WHITE;
+        }
+
+        clicked = false;
+        for (int j = 0; j < t_count; j++) {
+            clicked = CheckCollisionPointRec(touch_pos_arr[j], key_rec);
+            if (clicked) {
+                break;
+            }
+        }
+
+        if (clicked) {
+            k_color = KEY_DOWN_COLOR;
         }
 
         DrawRectangleRec(key_rec, k_color);
@@ -568,7 +595,7 @@ void draw_tab_keys(Vector2* cursor_p) {
         g_a.show_fft ^= true;
     }
 
-    draw_keys();
+    draw_synth_keyboard();
 
     cursor_p->x = GetScreenWidth() - KNOB_SIZE_W - GUI_GAP;
     if (draw_knob_i("Octave", cursor_p, &g_a.skeyboard.cur_octave, 0, OCTAVE_COUNT - 2, NULL)) {
