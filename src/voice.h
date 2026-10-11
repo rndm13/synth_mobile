@@ -20,6 +20,7 @@
 
 // Voices that are currently held on a virtual keyboard
 typedef struct Voice {
+    bool midi;
     float freq;
     int key_idx;
     int velocity;
@@ -35,7 +36,7 @@ typedef struct VoiceArr {
 void voice_arr_init(VoiceArr *v);
 void voice_arr_deinit(VoiceArr *v);
 void voice_remove(VoiceArr *v, int v_idx);
-bool voice_hold_key(VoiceArr *v, int k_idx, Voice* o_voice);
+bool voice_hold_key(VoiceArr *v, bool midi, int k_idx, int velocity, Voice* o_voice);
 void voice_release_key(VoiceArr *v, int k_idx);
 
 // Voices that are currently played by oscillators.

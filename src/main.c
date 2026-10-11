@@ -7,8 +7,11 @@
 #include <string.h>
 #include <time.h>
 
+#include "jack_midi_interface.h"
+#include "log.h"
 #include "raylib.h"
 
+#include "ring_buffer.h"
 #include "synth.h"
 #include "utils.h"
 #include "settings.h"
@@ -59,6 +62,7 @@ typedef struct App {
     bool show_prof;
 
     ProgramSelection program_selection;
+    JACKMidi midi;
 
     Synth s;
 } App;
@@ -148,6 +152,8 @@ void init_fft_stream() {
 void init_app() {
     int e = 0;
 
+    log_init();
+
     g_a.skeyboard.cur_octave = 3;
     update_synth_keyboard();
 
@@ -159,6 +165,7 @@ void init_app() {
     init_fft_stream();
     init_synth(&g_a.s);
     init_audio();
+    jack_midi_init(&g_a.midi);
 
     g_a.cur_tab = TAB_KEYS;
 }
@@ -166,6 +173,9 @@ void init_app() {
 void deinit_app() {
     deinit_synth(&g_a.s);
     deinit_audio();
+    jack_midi_deinit(&g_a.midi);
+
+    log_deinit();
 }
 
 void get_touch_points(int* t_count, Vector2 *touch_pos_arr) {
@@ -193,17 +203,24 @@ void process_synth_keyboard() {
     static Vector2 touch_pos_arr[MAX_TOUCH_POINTS] = { 0 };
     VoiceArr *va = &g_a.s.voice_arr;
     int t_count = 0;
+    int i = 0;
+    int v = 0;
+    int k = 0;
+    Rectangle key_rec = {};
+    Voice new_voice = {};
+    bool hold = false;
+    bool found = false;
 
     get_touch_points(&t_count, touch_pos_arr);
 
-    for (int i = 0; i < t_count; i++) {
-        for (int k = 0; k < KEY_COUNT; k++) {
-            Rectangle key_rec = g_a.skeyboard.key_rect_arr[k];
+    for (i = 0; i < t_count; i++) {
+        for (k = 0; k < KEY_COUNT; k++) {
+            key_rec = g_a.skeyboard.key_rect_arr[k];
 
             if (CheckCollisionPointRec(touch_pos_arr[i], key_rec)) {
-                Voice new_voice = {0};
+                memset(&new_voice, 0, sizeof(new_voice));
 
-                bool hold = voice_hold_key(va, k, &new_voice);
+                hold = voice_hold_key(va, false, k, 40, &new_voice);
                 if (!hold) {
                     synth_add_voice(&g_a.s, new_voice, GetTime());
                 }
@@ -216,11 +233,15 @@ void process_synth_keyboard() {
     // Release unheld keys
     pthread_rwlock_rdlock(&va->rw);
 
-    for (int v = 0; v < va->voice_count; v++) {
-        int k = va->voice_arr[v].key_idx;
-        Rectangle key_rec = g_a.skeyboard.key_rect_arr[k];
+    for (v = 0; v < va->voice_count; v++) {
+        if (va->voice_arr[v].midi) {
+            continue;
+        }
 
-        bool found = false;
+        k = va->voice_arr[v].key_idx;
+        key_rec = g_a.skeyboard.key_rect_arr[k];
+
+        found = false;
         for (int i = 0; i < t_count; i++) {
             if (CheckCollisionPointRec(touch_pos_arr[i], key_rec)) {
                 found = true;
@@ -228,7 +249,7 @@ void process_synth_keyboard() {
             }
         }
 
-        if (!found) {
+        if (false == found) {
             pthread_rwlock_unlock(&va->rw);
 
             voice_remove(&g_a.s.voice_arr, v);
@@ -532,7 +553,7 @@ void draw_tab_env(Vector2* cursor_p) {
         updated = false;
         env = &g_a.s.env_arr[i];
         split_cursor_p.x = cursor_p->x + (i % 2) * (wave_s.x + GUI_GAP);
-        split_cursor_p.y = cursor_p->y + (i / 2) * (wave_s.y + GUI_GAP);
+        split_cursor_p.y = cursor_p->y + (size_t)(i / 2) * (wave_s.y + GUI_GAP);
 
         push_gui_id_i(i);
 
@@ -688,6 +709,41 @@ void process_ui() {
     }
 }
 
+void process_midi() {
+    RingBufferElem rbe = {0};
+    VoiceMsg voice_update = {0};
+    Voice v = {0};
+
+    jack_midi_process_events(&g_a.midi);
+
+    while (true) {
+        rb_pop(&g_a.midi.rb_voice_msg, &rbe);
+        if (rbe.size <= 0) {
+            break;
+        }
+
+        if (rbe.size != sizeof(voice_update)) {
+            log_error("Unexpected size of ring buffer element rbe.size = %d, exp = %d.",
+                rbe.size, sizeof(voice_update));
+
+            continue;
+        }
+
+        memcpy(&voice_update, rbe.data, rbe.size);
+
+        log_info("Processing MIDI note message %d %d %d",
+            voice_update.released, voice_update.v.key_idx, voice_update.v.velocity);
+
+        if (voice_update.released) {
+            voice_release_key(&g_a.s.voice_arr, voice_update.v.key_idx);
+            synth_release_voice(&g_a.s, voice_update.v.key_idx, GetTime());
+        } else {
+            voice_hold_key(&g_a.s.voice_arr, true, voice_update.v.key_idx, voice_update.v.velocity, &v);
+            synth_add_voice(&g_a.s, v, GetTime());
+        }
+    }
+}
+
 void draw_ui() {
     Vector2 cursor_p = {GUI_GAP, GUI_GAP};
     Vector2 tab_s = { GetScreenWidth() - 2 * GUI_GAP, TAB_SIZE_H };
@@ -744,6 +800,7 @@ int main(void) {
 
     while (!WindowShouldClose()) {
         // Process
+        process_midi();
         process_ui();
 
         // Update
@@ -754,6 +811,8 @@ int main(void) {
             ClearBackground(BG_COLOR);
 
             draw_ui();
+
+            log_flush();
         EndDrawing();
     }
 

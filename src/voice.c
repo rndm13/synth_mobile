@@ -11,13 +11,15 @@ static float calc_voice_freq(int k_idx) {
     return powf(2.0f, (float)(k_idx - KEY_A4_IDX) / (float)KEY_OCTAVE) * KEY_A4_FREQ;
 }
 
-static void voice_set(VoiceArr* v, int v_idx, int k_idx) {
+static void voice_set(VoiceArr* v, bool midi, int v_idx, int k_idx, int velocity) {
+    v->voice_arr[v_idx].midi = midi;
     v->voice_arr[v_idx].freq = calc_voice_freq(k_idx);
     v->voice_arr[v_idx].key_idx = k_idx;
-    v->voice_arr[v_idx].velocity = 40;
+    v->voice_arr[v_idx].velocity = velocity;
 }
 
 static void voice_reset(VoiceArr* v, int v_idx) {
+    v->voice_arr[v_idx].midi = false;
     v->voice_arr[v_idx].freq = 0.0f;
     v->voice_arr[v_idx].key_idx = KEY_IDX_INVALID;
     v->voice_arr[v_idx].velocity = 0;
@@ -41,7 +43,7 @@ void voice_remove(VoiceArr *v, int v_idx) {
     pthread_rwlock_unlock(&v->rw);
 }
 
-bool voice_hold_key(VoiceArr *v, int k_idx, Voice* o_voice) {
+bool voice_hold_key(VoiceArr *v, bool midi, int k_idx, int velocity, Voice* o_voice) {
     bool existing_voice = false;
 
     pthread_rwlock_rdlock(&v->rw);
@@ -63,7 +65,7 @@ bool voice_hold_key(VoiceArr *v, int k_idx, Voice* o_voice) {
         voice_remove_u(v, 0);
     }
 
-    voice_set(v, v->voice_count, k_idx);
+    voice_set(v, midi, v->voice_count, k_idx, velocity);
     *o_voice = v->voice_arr[v->voice_count];
     v->voice_count++;
 
