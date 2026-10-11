@@ -168,20 +168,33 @@ void deinit_app() {
     deinit_audio();
 }
 
+void get_touch_points(int* t_count, Vector2 *touch_pos_arr) {
+#ifdef PLATFORM_ANDROID
+        *t_count = GetTouchPointCount();
+
+        // Clamp touch points available ( set the maximum touch points allowed )
+        if (*t_count > MAX_TOUCH_POINTS) {
+            *t_count = MAX_TOUCH_POINTS;
+        }
+
+        // Get touch points positions
+        for (int i = 0; i < *t_count; i++) {
+            touch_pos_arr[i] = GetTouchPosition(i);
+        }
+#else
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            *t_count = 1;
+            touch_pos_arr[0] = GetMousePosition();
+        }
+#endif
+}
+
 void process_synth_keyboard() {
     static Vector2 touch_pos_arr[MAX_TOUCH_POINTS] = { 0 };
     VoiceArr *va = &g_a.s.voice_arr;
-    int t_count = GetTouchPointCount();
+    int t_count = 0;
 
-    // Clamp touch points available ( set the maximum touch points allowed )
-    if (t_count > MAX_TOUCH_POINTS) {
-        t_count = MAX_TOUCH_POINTS;
-    }
-
-    // Get touch points positions
-    for (int i = 0; i < t_count; i++) {
-        touch_pos_arr[i] = GetTouchPosition(i);
-    }
+    get_touch_points(&t_count, touch_pos_arr);
 
     for (int i = 0; i < t_count; i++) {
         for (int k = 0; k < KEY_COUNT; k++) {
@@ -335,19 +348,10 @@ void draw_voice_arr() {
 
 void draw_synth_keyboard() {
     static Vector2 touch_pos_arr[MAX_TOUCH_POINTS] = { 0 };
-    int t_count = GetTouchPointCount();
-
-    // Clamp touch points available ( set the maximum touch points allowed )
-    if (t_count > MAX_TOUCH_POINTS) {
-        t_count = MAX_TOUCH_POINTS;
-    }
-
-    // Get touch points positions
-    for (int i = 0; i < t_count; i++) {
-        touch_pos_arr[i] = GetTouchPosition(i);
-    }
-
+    int t_count = 0;
     bool clicked = false;
+
+    get_touch_points(&t_count, touch_pos_arr);
 
     for (int i = 0; i < KEY_COUNT; i++) {
         Rectangle key_rec = g_a.skeyboard.key_rect_arr[i];
