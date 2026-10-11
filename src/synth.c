@@ -1,11 +1,13 @@
 #include "synth.h"
 
-#include "src/filter.h"
-#include "src/osc.h"
-#include "src/settings.h"
-#include "src/voice.h"
-#include "stdlib.h"
-#include "raymath.h"
+#include <stdlib.h>
+#include <raymath.h>
+#include <stdio.h>
+
+#include "filter.h"
+#include "osc.h"
+#include "settings.h"
+#include "voice.h"
 
 void init_synth(Synth* s) {
     int e = 0;

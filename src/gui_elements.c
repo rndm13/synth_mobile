@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "src/settings.h"
+#include "settings.h"
 #include "utils.h"
 
 #define MAX_GUI_ID_STACK_DEPTH     10

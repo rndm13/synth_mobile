@@ -11,3 +11,5 @@ android/build/res
 android/build/src/com/raylib/synth/R.java
 synth.apk
 .venv
+
+build

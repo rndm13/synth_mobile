@@ -1,14 +1,17 @@
 #include "file.h"
 
+#define __USE_XOPEN_EXTENDED 1
+#define _XOPEN_SOURCE 500
 #include <ftw.h>
+
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 #include "ini.h"
-#include "src/filter.h"
-#include "src/settings.h"
+#include "filter.h"
+#include "settings.h"
 
 ProgramSelection* g_ps = NULL;
 

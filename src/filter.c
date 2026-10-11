@@ -93,7 +93,7 @@ void prepare_filter_display(Filter* flt) {
             continue;
         }
 
-        double freq = FLT_CUTOFF_MIN * powf(FLT_CUTOFF_MAX / FLT_CUTOFF_MIN, (double)(i) / (DISPLAY_BUFFER_SIZE - 1));
+        double freq = FLT_CUTOFF_MIN * pow(FLT_CUTOFF_MAX / FLT_CUTOFF_MIN, (double)(i) / (DISPLAY_BUFFER_SIZE - 1));
 
         // Current frequency in radians (0 to PI)
         double w = 2.0 * PI * freq / FLT_OVERSAMPLED_RATE;

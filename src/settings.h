@@ -69,8 +69,15 @@
 #define FILEPATH_CAPACITY     512
 
 #define PROGRAM_MAX_SIZE      20000
+#define LINUX_APP_DIR_PATH    "./"
 #define ANDROID_APP_DIR_PATH  "/storage/emulated/0/Android/data/com.raylib.synth/files"
+
+#ifdef PLATFORM_ANDROID
 #define PROGRAM_PATH          ANDROID_APP_DIR_PATH
+#else
+#define PROGRAM_PATH          LINUX_APP_DIR_PATH
+#endif
+
 #define PROGRAM_EXTENSION     ".ini"
 #define INI_SECTION_CAPACITY  20
 
