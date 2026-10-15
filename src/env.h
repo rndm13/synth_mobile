@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #include "settings.h"
+#include "voice.h"
 
 typedef struct Env {
     pthread_rwlock_t rw;
@@ -15,7 +16,7 @@ typedef struct Env {
     float disp_buffer[DISPLAY_BUFFER_SIZE];
 } Env;
 
-float calc_env_value(double time, bool released, double release_time, float last_env, Env *env);
+float calc_env_value(size_t sample_idx, Env *env, OscVoice *ov);
 void init_env(Env* env);
 void deinit_env(Env* env);
 void prepare_env_display(Env* env);

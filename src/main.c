@@ -203,26 +203,19 @@ void process_synth_keyboard() {
     static Vector2 touch_pos_arr[MAX_TOUCH_POINTS] = { 0 };
     VoiceArr *va = &g_a.s.voice_arr;
     int t_count = 0;
-    int i = 0;
-    int v = 0;
-    int k = 0;
-    Rectangle key_rec = {};
-    Voice new_voice = {};
-    bool hold = false;
-    bool found = false;
 
     get_touch_points(&t_count, touch_pos_arr);
 
-    for (i = 0; i < t_count; i++) {
-        for (k = 0; k < KEY_COUNT; k++) {
-            key_rec = g_a.skeyboard.key_rect_arr[k];
+    for (int i = 0; i < t_count; i++) {
+        for (int k = 0; k < KEY_COUNT; k++) {
+            Rectangle key_rec = g_a.skeyboard.key_rect_arr[k];
 
             if (CheckCollisionPointRec(touch_pos_arr[i], key_rec)) {
-                memset(&new_voice, 0, sizeof(new_voice));
+                Voice new_voice = {0};
 
-                hold = voice_hold_key(va, false, k, 40, &new_voice);
+                bool hold = voice_hold_key(va, false, k, 127, &new_voice);
                 if (!hold) {
-                    synth_add_voice(&g_a.s, new_voice, GetTime());
+                    synth_add_voice(&g_a.s, new_voice);
                 }
 
                 break; // Found a key for this touch. See next touch.
@@ -233,15 +226,15 @@ void process_synth_keyboard() {
     // Release unheld keys
     pthread_rwlock_rdlock(&va->rw);
 
-    for (v = 0; v < va->voice_count; v++) {
+    for (int v = 0; v < va->voice_count; v++) {
         if (va->voice_arr[v].midi) {
             continue;
         }
 
-        k = va->voice_arr[v].key_idx;
-        key_rec = g_a.skeyboard.key_rect_arr[k];
+        int k = va->voice_arr[v].key_idx;
+        Rectangle key_rec = g_a.skeyboard.key_rect_arr[k];
 
-        found = false;
+        bool found = false;
         for (int i = 0; i < t_count; i++) {
             if (CheckCollisionPointRec(touch_pos_arr[i], key_rec)) {
                 found = true;
@@ -249,14 +242,14 @@ void process_synth_keyboard() {
             }
         }
 
-        if (false == found) {
+        if (!found) {
             pthread_rwlock_unlock(&va->rw);
 
             voice_remove(&g_a.s.voice_arr, v);
 
             pthread_rwlock_rdlock(&va->rw);
 
-            synth_release_voice(&g_a.s, k, GetTime());
+            synth_release_voice(&g_a.s, k);
         }
     }
 
@@ -326,24 +319,22 @@ void draw_voice_arr() {
     OscVoice* last = osc_voice_get_last(&osc->voice_arr);
     int k_idx = 0;
     int unison = 0;
-    float start_time = 0.0f;
-    float release_time = 0.0f;
-    float env = 0.0f;
+    size_t start_sample_idx = 0.0f;
+    size_t release_sample_idx = 0.0f;
     int wave_idx = 0;
 
     for (int i = 0; i < osc->voice_arr.osc_voice_count; i++) {
         k_idx = osc->voice_arr.osc_voice_arr[i].voice.key_idx;
         unison = osc->voice_arr.osc_voice_arr[i].unison_idx;
-        start_time = osc->voice_arr.osc_voice_arr[i].start_time;
-        release_time = osc->voice_arr.osc_voice_arr[i].release_time;
-        env = osc->voice_arr.osc_voice_arr[i].last_env;
+        start_sample_idx = osc->voice_arr.osc_voice_arr[i].start_sample_idx;
+        release_sample_idx = osc->voice_arr.osc_voice_arr[i].release_sample_idx;
         wave_idx = osc->voice_arr.osc_voice_arr[i].wave_idx;
 
         DrawText(
                 TextFormat(
-                    "key: %d, u: %d, t: %.2f, r: %.2f, env: %.2f, w: %d",
-                    k_idx, unison, GetTime() - start_time,
-                    release_time - start_time, env, wave_idx),
+                    "key: %d, u: %d, t: %zu, r: %zu, w: %d",
+                    k_idx, unison, start_sample_idx,
+                    release_sample_idx, wave_idx),
                 GUI_GAP, GUI_GAP + FONT_SIZE * i,
                 FONT_SIZE, RED);
     }
@@ -351,15 +342,14 @@ void draw_voice_arr() {
     if (last != NULL) {
         k_idx = last->voice.key_idx;
         unison = last->unison_idx;
-        start_time = last->start_time;
-        release_time = last->release_time;
-        env = last->last_env;
+        start_sample_idx = last->start_sample_idx;
+        release_sample_idx = last->release_sample_idx;
         wave_idx = last->wave_idx;
         DrawText(
                 TextFormat(
-                    "LAST: key: %d, u: %d, t: %.2f, r: %.2f, env: %.2f, w: %d",
-                    k_idx, unison, GetTime() - start_time,
-                    release_time - start_time, env, wave_idx),
+                    "LAST: key: %d, u: %d, t: %zu, r: %zu, w: %d",
+                    k_idx, unison, start_sample_idx,
+                    release_sample_idx, wave_idx),
                 GUI_GAP, GUI_GAP + FONT_SIZE * osc->voice_arr.osc_voice_count,
                 FONT_SIZE, RED);
     }
@@ -627,7 +617,7 @@ void draw_tab_keys(Vector2* cursor_p) {
 
     set_gui_dir(GD_VERTICAL);
     if (g_a.show_fft) {
-        clicked = draw_wave("FFT", cursor_p, wave_s, g_a.fft_stream.buffer_r, FFT_BUFFER_SIZE / 2, 0);
+        clicked = draw_wave("FFT", cursor_p, wave_s, g_a.fft_stream.buffer_r, FFT_BUFFER_SIZE / 8, 0);
     } else {
         clicked = draw_wave("Wave", cursor_p, wave_s, g_a.fft_stream.buffer_audio, FFT_BUFFER_SIZE, g_a.fft_stream.buffer_idx);
     }
@@ -736,10 +726,10 @@ void process_midi() {
 
         if (voice_update.released) {
             voice_release_key(&g_a.s.voice_arr, voice_update.v.key_idx);
-            synth_release_voice(&g_a.s, voice_update.v.key_idx, GetTime());
+            synth_release_voice(&g_a.s, voice_update.v.key_idx);
         } else {
             voice_hold_key(&g_a.s.voice_arr, true, voice_update.v.key_idx, voice_update.v.velocity, &v);
-            synth_add_voice(&g_a.s, v, GetTime());
+            synth_add_voice(&g_a.s, v);
         }
     }
 }

@@ -25,7 +25,7 @@ float calc_osc_value(OscType type, int wave_idx, int wave_length) {
     return 0.0f;
 }
 
-void osc_add_voice(Osc* osc, Voice new_voice, float time) {
+void osc_add_voice(Osc* osc, Voice new_voice, size_t start_idx) {
     int unison = 0;
 
     int e = pthread_rwlock_rdlock(&osc->params.rw);
@@ -42,7 +42,7 @@ void osc_add_voice(Osc* osc, Voice new_voice, float time) {
         return;
     }
 
-    osc_voice_add_unison(&osc->voice_arr, new_voice, unison, time);
+    osc_voice_add_unison(&osc->voice_arr, new_voice, unison, start_idx);
 }
 
 void prepare_osc_display(Osc* osc) {

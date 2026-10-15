@@ -1,11 +1,15 @@
 #include "env.h"
 
+#include "settings.h"
 #include "utils.h"
 
-float calc_env_value(double time, bool released, double release_time, float release_start_env, Env *env) {
+static
+float calc_env_value_args(size_t sample_idx, Env *env, size_t start_sample_idx, size_t release_sample_idx, bool released) {
     float result = 0.0f;
-    float time_in_release = time - release_time;
-    float time_in_decay = 0.0f;
+    float release_start_env = 0.0f;
+    float time = (float)(sample_idx - start_sample_idx) / SAMPLE_RATE;
+    float release_time = 0;
+    float decay_time = 0;
     float decay_progress = 0.0f;
     int e = 0;
 
@@ -17,13 +21,15 @@ float calc_env_value(double time, bool released, double release_time, float rele
 
     // 1. Handle Release Phase
     if (released) {
-        time_in_release = time - release_time;
-        if (time_in_release >= env->release) {
+        release_start_env = calc_env_value_args(release_sample_idx, env, start_sample_idx, release_sample_idx, false);
+        release_time = (float)(sample_idx - release_sample_idx) / SAMPLE_RATE;
+
+        if (release_time >= env->release) {
             result = 0.0f;
             goto unlock;
         }
 
-        result = release_start_env * (1.0f - (time_in_release / env->release));
+        result = release_start_env * (1.0f - (release_time / env->release));
 
         goto unlock;
     }
@@ -35,9 +41,9 @@ float calc_env_value(double time, bool released, double release_time, float rele
     }
 
     // 3. Decay Phase
-    time_in_decay = time - env->attack;
-    decay_progress = time_in_decay / env->decay;
-    if (time_in_decay < env->decay) {
+    decay_time = time - env->attack;
+    decay_progress = decay_time / env->decay;
+    if (decay_time < env->decay) {
         result = 1.0f - (decay_progress * (1.0f - env->sustain));
         goto unlock;
     }
@@ -53,6 +59,11 @@ unlock:
     }
 
     return result;
+
+}
+
+float calc_env_value(size_t sample_idx, Env *env, OscVoice *ov) {
+    return calc_env_value_args(sample_idx, env, ov->start_sample_idx, ov->release_sample_idx, ov->released);
 }
 
 void init_env(Env* env) {
@@ -86,14 +97,11 @@ void prepare_env_display(Env* env) {
         return;
     }
 
-
     for (i = 0; i < ARRAY_SIZE(env->disp_buffer); i++) {
         time = total_time * i / (float)DISPLAY_BUFFER_SIZE;
 
         released = time >= env->attack + env->decay;
-        env->disp_buffer[i] = 1.8 * calc_env_value(
-                time, released, env->attack + env->decay,
-                env->sustain, env) - 0.9;
+        env->disp_buffer[i] = 1.8 * calc_env_value_args(i, env, 0, (env->attack + env->decay) / DISPLAY_BUFFER_SIZE, released) - 0.9;
     }
 
     e = pthread_rwlock_unlock(&env->rw);

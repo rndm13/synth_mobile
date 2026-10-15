@@ -44,16 +44,16 @@ void voice_release_key(VoiceArr *v, int k_idx);
 typedef struct OscVoice {
     // Initial
     Voice voice;
-    float start_time;
     size_t unison_idx;
 
     // Once during runtime
-    float release_time;
+    size_t start_sample_idx;
     bool released;
+    size_t release_sample_idx;
+    bool dead;
 
     // Private data for oscillator
     int wave_idx;
-    float last_env;
 } OscVoice;
 
 typedef struct OscVoiceArr {
@@ -67,8 +67,8 @@ typedef struct OscVoiceArr {
 void osc_voice_arr_init(OscVoiceArr *ov);
 void osc_voice_arr_deinit(OscVoiceArr *v);
 void osc_voice_remove(OscVoiceArr *ov, int ov_idx);
-void osc_voice_add(OscVoiceArr *ov, Voice v, float time);
-void osc_voice_add_unison(OscVoiceArr *ov, Voice v, size_t cnt, float time);
-void osc_voice_release(OscVoiceArr *ov, int k_idx, float time);
+void osc_voice_add(OscVoiceArr *ov, Voice v, size_t start_idx);
+void osc_voice_add_unison(OscVoiceArr *ov, Voice v, size_t cnt, size_t start_idx);
+void osc_voice_release(OscVoiceArr *ov, int k_idx, size_t release_idx);
 OscVoice* osc_voice_get_last(OscVoiceArr *ov);
 void osc_voice_gc(OscVoiceArr *ov);

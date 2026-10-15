@@ -24,12 +24,12 @@
 #define DELAY_S_MIN 0.01f
 #define DELAY_S_MAX 1
 
-#define ENV_A_MIN 0.2f
-#define ENV_A_MAX 5.0f
-#define ENV_D_MIN 0.2f
-#define ENV_D_MAX 5.0f
-#define ENV_R_MIN 0.2f
-#define ENV_R_MAX 5.0f
+#define ENV_A_MIN 0.05f
+#define ENV_A_MAX 5.00f
+#define ENV_D_MIN 0.05f
+#define ENV_D_MAX 5.00f
+#define ENV_R_MIN 0.05f
+#define ENV_R_MAX 5.00f
 
 #define ENV_COUNT    3
 #define OSC_COUNT    2

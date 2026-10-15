@@ -89,15 +89,15 @@ void voice_release_key(VoiceArr *v, int k_idx) {
 }
 
 static void osc_voice_set(OscVoiceArr* ov, int ov_idx,
-        Voice v, int u_idx, int wave_idx, float time) {
+        Voice v, int u_idx, int wave_idx, size_t start_idx) {
     ov->osc_voice_arr[ov_idx].voice = v;
-    ov->osc_voice_arr[ov_idx].start_time = time;
     ov->osc_voice_arr[ov_idx].unison_idx = u_idx;
 
-    ov->osc_voice_arr[ov_idx].release_time = 0;
+    ov->osc_voice_arr[ov_idx].start_sample_idx = start_idx;
+    ov->osc_voice_arr[ov_idx].release_sample_idx = 0;
     ov->osc_voice_arr[ov_idx].released = false;
+    ov->osc_voice_arr[ov_idx].dead = false;
 
-    ov->osc_voice_arr[ov_idx].last_env = 0;
     ov->osc_voice_arr[ov_idx].wave_idx = wave_idx;
 }
 
@@ -106,13 +106,13 @@ static void osc_voice_reset(OscVoiceArr* ov, int ov_idx) {
     ov->osc_voice_arr[ov_idx].voice.key_idx = KEY_IDX_INVALID;
     ov->osc_voice_arr[ov_idx].voice.velocity = 0.0f;
 
-    ov->osc_voice_arr[ov_idx].start_time = 0;
     ov->osc_voice_arr[ov_idx].unison_idx = 0;
 
-    ov->osc_voice_arr[ov_idx].release_time = 0;
+    ov->osc_voice_arr[ov_idx].start_sample_idx = 0;
+    ov->osc_voice_arr[ov_idx].release_sample_idx = 0;
     ov->osc_voice_arr[ov_idx].released = false;
+    ov->osc_voice_arr[ov_idx].dead = false;
 
-    ov->osc_voice_arr[ov_idx].last_env = 0;
     ov->osc_voice_arr[ov_idx].wave_idx = 0;
 }
 
@@ -134,8 +134,7 @@ void osc_voice_remove(OscVoiceArr *ov, int ov_idx) {
     pthread_rwlock_unlock(&ov->rw);
 }
 
-void osc_voice_add_u(OscVoiceArr *ov,
-        Voice v, int u_idx, float time) {
+void osc_voice_add_u(OscVoiceArr *ov, Voice v, int u_idx, size_t start_idx) {
     int wave_idx = 0;
     int wave_length = 0;
 
@@ -149,38 +148,36 @@ void osc_voice_add_u(OscVoiceArr *ov,
         wave_idx = rand() % wave_length;
     }
 
-    osc_voice_set(ov, ov->osc_voice_count, v, u_idx, wave_idx, time);
+    osc_voice_set(ov, ov->osc_voice_count, v, u_idx, wave_idx, start_idx);
     ov->osc_voice_count++;
 }
 
-void osc_voice_add(OscVoiceArr *ov,
-        Voice v, float time) {
+void osc_voice_add(OscVoiceArr *ov, Voice v, size_t start_idx) {
     pthread_rwlock_wrlock(&ov->rw);
 
-    osc_voice_add_u(ov, v, 0, time);
+    osc_voice_add_u(ov, v, 0, start_idx);
 
     pthread_rwlock_unlock(&ov->rw);
 }
 
-void osc_voice_add_unison(OscVoiceArr *ov,
-        Voice v, size_t cnt, float time) {
+void osc_voice_add_unison(OscVoiceArr *ov, Voice v, size_t cnt, size_t start_idx) {
     pthread_rwlock_wrlock(&ov->rw);
 
     for (size_t i = 0; i < cnt; i++) {
-        osc_voice_add_u(ov, v, i, time);
+        osc_voice_add_u(ov, v, i, start_idx);
     }
 
     pthread_rwlock_unlock(&ov->rw);
 }
 
-void osc_voice_release(OscVoiceArr *ov, int k_idx, float time) {
+void osc_voice_release(OscVoiceArr *ov, int k_idx, size_t release_idx) {
     pthread_rwlock_wrlock(&ov->rw);
 
     for (int ov_idx = 0; ov_idx < ov->osc_voice_count; ov_idx++) {
         if (ov->osc_voice_arr[ov_idx].voice.key_idx == k_idx &&
             !ov->osc_voice_arr[ov_idx].released) {
-            ov->osc_voice_arr[ov_idx].release_time = time;
             ov->osc_voice_arr[ov_idx].released = true;
+            ov->osc_voice_arr[ov_idx].release_sample_idx = release_idx;
         }
     }
 
@@ -190,8 +187,8 @@ void osc_voice_release(OscVoiceArr *ov, int k_idx, float time) {
 OscVoice* osc_voice_get_last(OscVoiceArr *ov) {
     size_t max_start_time_idx = 0;
     for (size_t i = 1; i < ov->osc_voice_count; i++) {
-        if (ov->osc_voice_arr[i].start_time >
-            ov->osc_voice_arr[max_start_time_idx].start_time) {
+        if (ov->osc_voice_arr[i].start_sample_idx >
+            ov->osc_voice_arr[max_start_time_idx].start_sample_idx) {
             max_start_time_idx = i;
         }
     }
@@ -207,12 +204,7 @@ void osc_voice_gc(OscVoiceArr *ov) {
     pthread_rwlock_rdlock(&ov->rw);
 
     for (int i = 0; i < ov->osc_voice_count; i++) {
-        while (
-            i < ov->osc_voice_count &&
-            ov->osc_voice_arr[i].released &&
-            ov->osc_voice_arr[i].last_env == 0
-        ) {
-            // Hopefully this works fine-ish
+        while (i < ov->osc_voice_count && ov->osc_voice_arr[i].dead) {
             pthread_rwlock_unlock(&ov->rw);
 
             osc_voice_remove(ov, i);
