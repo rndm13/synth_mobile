@@ -1,6 +1,7 @@
 #include "osc.h"
 
 #include "math.h"
+#include "settings.h"
 
 float calc_osc_value(OscType type, int wave_idx, int wave_length) {
     wave_idx %= wave_length;
@@ -25,42 +26,15 @@ float calc_osc_value(OscType type, int wave_idx, int wave_length) {
     return 0.0f;
 }
 
-void osc_add_voice(Osc* osc, Voice new_voice, size_t start_idx) {
-    int unison = 0;
-
-    int e = pthread_rwlock_rdlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    unison = osc->params.unison;
-
-    e = pthread_rwlock_unlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    osc_voice_add_unison(&osc->voice_arr, new_voice, unison, start_idx);
+void osc_add_voice(const OscParams* params, OscState* osc, Voice new_voice, size_t start_idx) {
+    osc_voice_add_unison(&osc->voice_arr, new_voice, params->unison, start_idx, params->rand_phase);
 }
 
-void prepare_osc_display(Osc* osc) {
-    int e = pthread_rwlock_wrlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
+void prepare_osc_display(const OscParams* params, float disp_buffer[DISPLAY_BUFFER_SIZE]) {
+    int wave_length = DISPLAY_BUFFER_SIZE;
 
-    int wave_length = ARRAY_SIZE(osc->disp_buffer);
     for (int i = 0; i < wave_length; i++) {
-        osc->disp_buffer[i] = calc_osc_value(osc->params.type, i, wave_length / 2);
-    }
-
-    e = pthread_rwlock_unlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
+        disp_buffer[i] = calc_osc_value(params->type, i, wave_length / 2);
     }
 }
 
@@ -72,25 +46,15 @@ float calc_cents_mul(float cents) {
     return powf(2, cents / CENTS_IN_OCTAVE);
 }
 
-void init_osc(Osc* osc) {
-    int e = pthread_rwlock_init(&osc->params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
+void init_osc_params(OscParams* osc) {
+    osc->type = OT_SINE;
+    osc->semi = 0;
+    osc->cents = 0;
+    osc->unison = OSC_UNISON_MIN;
+    osc->detune = OSC_DETUNE_MIN;
+    osc->volume = 1.0f;
+}
 
+void init_osc_state(OscState* osc) {
     osc_voice_arr_init(&osc->voice_arr);
-    osc->params.type = OT_SINE;
-    osc->params.semi = 0;
-    osc->params.cents = 0;
-    osc->params.unison = OSC_UNISON_MIN;
-    osc->params.detune = OSC_DETUNE_MIN;
-    osc->params.volume = 1.0f;
-
-    prepare_osc_display(osc);
 }
-
-void deinit_osc(Osc* osc) {
-    pthread_rwlock_destroy(&osc->params.rw);
-    osc_voice_arr_deinit(&osc->voice_arr);
-}
-

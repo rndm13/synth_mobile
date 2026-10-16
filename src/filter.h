@@ -19,8 +19,6 @@ typedef enum FilterType {
 const char* ft2str(FilterType ft);
 
 typedef struct FilterParams {
-    pthread_rwlock_t rw;
-
     FilterType type;
     float cutoff;
     float resonance;
@@ -28,10 +26,10 @@ typedef struct FilterParams {
     float gain;
 } FilterParams;
 
-typedef struct BiquadFilterParams {
+typedef struct BiquadFilterState {
     double a[3]; // Poles
     double b[3]; // Zeros
-} BiquadFilterParams;
+} BiquadFilterState;
 
 typedef struct FIRFilter {
     float coeffs[FLT_FIR_TAPS];
@@ -40,29 +38,23 @@ typedef struct FIRFilter {
     float history[FLT_FIR_TAPS];
 } FIRFilter;
 
-typedef struct Filter {
-    // RW protected
-    FilterParams params;
-
-    // Filter state
+typedef struct FilterState {
+    BiquadFilterState biquad;
     double x[3];
     double y[3];
     FIRFilter fir_up;
     FIRFilter fir_down;
-    float last_env;
 
-    // Filter output
-    float disp_buffer[DISPLAY_BUFFER_SIZE];
     float oversampled_buffer[BUFFER_SIZE * FLT_OVERSAMPLING];
-} Filter;
+} FilterState;
 
-void calc_biquad_filter_params(FilterParams* flt, BiquadFilterParams* o_biquad);
-void prepare_filter_display(Filter* flt);
+void calc_biquad_filter_params(const FilterParams* flt, BiquadFilterState* o_biquad);
+void prepare_filter_display(const FilterParams* flt, float disp_buffer[DISPLAY_BUFFER_SIZE]);
 
 float update_fir_filter(FIRFilter *fir, float input);
-void upsample_filter_u(Filter* flt, float* buffer, size_t n);
-void downsample_filter_u(Filter* flt, float* buffer, size_t n);
+void upsample_filter(FilterState* flt, float* buffer, size_t n);
+void downsample_filter(FilterState* flt, float* buffer, size_t n);
 
 void init_fir_filter(FIRFilter* fir, float sample_rate);
-void init_filter(Filter *flt);
-void deinit_filter(Filter *flt);
+void init_filter_params(FilterParams *flt);
+void init_filter_state(const FilterParams* params, FilterState *flt);

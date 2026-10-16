@@ -3,7 +3,6 @@
 #include <math.h>
 #include <stddef.h>
 #include <complex.h>
-#include <pthread.h>
 #include <string.h>
 #include <time.h>
 
@@ -130,7 +129,7 @@ void init_audio() {
     SetAudioStreamBufferSizeDefault(BUFFER_SIZE);
     // Init raw audio stream (sample rate: 44100, sample size: 32bit-float, channels: 1-mono)
     g_a.audio_stream = LoadAudioStream(SAMPLE_RATE, 32, 1);
-    SetAudioStreamPan(g_a.audio_stream, g_a.s.params.pan);
+    SetAudioStreamPan(g_a.audio_stream, 0.5);
     PlayAudioStream(g_a.audio_stream);
     SetAudioStreamCallback(g_a.audio_stream, audio_callback);
 }
@@ -157,13 +156,16 @@ void init_app() {
     g_a.skeyboard.cur_octave = 3;
     update_synth_keyboard();
 
+    init_synth_params(&g_a.s.gui_params);
+    init_synth_params(&g_a.s.locked_params);
+    init_synth_state(&g_a.s.gui_params, &g_a.s.state);
+
     e = init_program_selection(PROGRAM_PATH, &g_a.program_selection);
     if (e != 0) {
         add_toast("Failed to initialize program selection: %d", e);
     }
 
     init_fft_stream();
-    init_synth(&g_a.s);
     init_audio();
     jack_midi_init(&g_a.midi);
 
@@ -171,7 +173,6 @@ void init_app() {
 }
 
 void deinit_app() {
-    deinit_synth(&g_a.s);
     deinit_audio();
     jack_midi_deinit(&g_a.midi);
 
@@ -201,7 +202,7 @@ void get_touch_points(int* t_count, Vector2 *touch_pos_arr) {
 
 void process_synth_keyboard() {
     static Vector2 touch_pos_arr[MAX_TOUCH_POINTS] = { 0 };
-    VoiceArr *va = &g_a.s.voice_arr;
+    VoiceArr *va = &g_a.s.gui_params.voice_arr;
     int t_count = 0;
 
     get_touch_points(&t_count, touch_pos_arr);
@@ -214,17 +215,11 @@ void process_synth_keyboard() {
                 Voice new_voice = {0};
 
                 bool hold = voice_hold_key(va, false, k, 127, &new_voice);
-                if (!hold) {
-                    synth_add_voice(&g_a.s, new_voice);
-                }
 
                 break; // Found a key for this touch. See next touch.
             }
         }
     }
-
-    // Release unheld keys
-    pthread_rwlock_rdlock(&va->rw);
 
     for (int v = 0; v < va->voice_count; v++) {
         if (va->voice_arr[v].midi) {
@@ -243,19 +238,9 @@ void process_synth_keyboard() {
         }
 
         if (!found) {
-            pthread_rwlock_unlock(&va->rw);
-
-            voice_remove(&g_a.s.voice_arr, v);
-
-            pthread_rwlock_rdlock(&va->rw);
-
-            synth_release_voice(&g_a.s, k);
+            voice_remove(&g_a.s.gui_params.voice_arr, v);
         }
     }
-
-    pthread_rwlock_unlock(&va->rw);
-
-    synth_gc_voice(&g_a.s);
 }
 
 void update_fft() {
@@ -286,7 +271,7 @@ void push_fft_stream(float* buffer, size_t n) {
 
 void audio_callback(void *_buffer, unsigned int frames) {
     float *out_buffer = (float *)_buffer;
-    update_synth(&g_a.s, GetTime(), out_buffer, frames);
+    update_synth(&g_a.s, out_buffer, frames);
     push_fft_stream(out_buffer, frames);
 }
 
@@ -301,60 +286,53 @@ void draw_profiling_stats() {
                 "amp: %dms\n"
                 "total: %dms\n"
                 "stage: %zu\n",
-                NS_TO_MS(g_a.s.prof.osc_time[0].tv_nsec),
-                NS_TO_MS(g_a.s.prof.osc_time[1].tv_nsec),
-                NS_TO_MS(g_a.s.prof.flt_time.tv_nsec),
-                NS_TO_MS(g_a.s.prof.distortion_time.tv_nsec),
-                NS_TO_MS(g_a.s.prof.delay_time.tv_nsec),
-                NS_TO_MS(g_a.s.prof.amp_time.tv_nsec),
-                NS_TO_MS(g_a.s.prof.total_time.tv_nsec),
-                g_a.s.prof.cur_stage),
+                NS_TO_MS(g_a.s.state.prof.osc_time[0].tv_nsec),
+                NS_TO_MS(g_a.s.state.prof.osc_time[1].tv_nsec),
+                NS_TO_MS(g_a.s.state.prof.flt_time.tv_nsec),
+                NS_TO_MS(g_a.s.state.prof.distortion_time.tv_nsec),
+                NS_TO_MS(g_a.s.state.prof.delay_time.tv_nsec),
+                NS_TO_MS(g_a.s.state.prof.amp_time.tv_nsec),
+                NS_TO_MS(g_a.s.state.prof.total_time.tv_nsec),
+                g_a.s.state.prof.cur_stage),
             GUI_GAP, GUI_GAP + FONT_SIZE,
             FONT_SIZE, RED);
 }
 
 void draw_voice_arr() {
-    Osc* osc = &g_a.s.osc_arr[0];
-    pthread_rwlock_rdlock(&osc->voice_arr.rw);
-    OscVoice* last = osc_voice_get_last(&osc->voice_arr);
+    OscState* osc = &g_a.s.state.osc_arr[0];
+    uint32_t id = 0;
     int k_idx = 0;
-    int unison = 0;
+    int v_idx = 0;
+    uint8_t velocity = 0;
     size_t start_sample_idx = 0.0f;
     size_t release_sample_idx = 0.0f;
     int wave_idx = 0;
 
+    // for (int i = 0; i < g_a.s.gui_params.voice_arr.voice_count; i++) {
+    //     id = g_a.s.gui_params.voice_arr.voice_arr[i].id;
+    //     k_idx = g_a.s.gui_params.voice_arr.voice_arr[i].key_idx;
+    //     velocity = g_a.s.gui_params.voice_arr.voice_arr[i].velocity;
+    //
+    //     DrawText(
+    //             TextFormat("id: %d, key: %d, vel: %d", id, k_idx, velocity),
+    //             GUI_GAP, GUI_GAP + FONT_SIZE * i,
+    //             FONT_SIZE, RED);
+    // }
+
     for (int i = 0; i < osc->voice_arr.osc_voice_count; i++) {
         k_idx = osc->voice_arr.osc_voice_arr[i].voice.key_idx;
-        unison = osc->voice_arr.osc_voice_arr[i].unison_idx;
+        v_idx = osc->voice_arr.osc_voice_arr[i].voice.id;
         start_sample_idx = osc->voice_arr.osc_voice_arr[i].start_sample_idx;
         release_sample_idx = osc->voice_arr.osc_voice_arr[i].release_sample_idx;
         wave_idx = osc->voice_arr.osc_voice_arr[i].wave_idx;
 
         DrawText(
                 TextFormat(
-                    "key: %d, u: %d, t: %zu, r: %zu, w: %d",
-                    k_idx, unison, start_sample_idx,
-                    release_sample_idx, wave_idx),
+                    "key: %d, v: %d, t: %zu, r: %zu",
+                    k_idx, v_idx, start_sample_idx, release_sample_idx),
                 GUI_GAP, GUI_GAP + FONT_SIZE * i,
                 FONT_SIZE, RED);
     }
-
-    if (last != NULL) {
-        k_idx = last->voice.key_idx;
-        unison = last->unison_idx;
-        start_sample_idx = last->start_sample_idx;
-        release_sample_idx = last->release_sample_idx;
-        wave_idx = last->wave_idx;
-        DrawText(
-                TextFormat(
-                    "LAST: key: %d, u: %d, t: %zu, r: %zu, w: %d",
-                    k_idx, unison, start_sample_idx,
-                    release_sample_idx, wave_idx),
-                GUI_GAP, GUI_GAP + FONT_SIZE * osc->voice_arr.osc_voice_count,
-                FONT_SIZE, RED);
-    }
-
-    pthread_rwlock_unlock(&osc->voice_arr.rw);
 }
 
 void draw_synth_keyboard() {
@@ -421,7 +399,7 @@ void draw_tab_synth(Vector2* cursor_p) {
 
     Vector2 cursor_p_r1 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
-    draw_text_field("Program name", &cursor_p_r1, tfield_s, g_a.s.program_name, PROGRAM_NAME_CAPACITY);
+    draw_text_field("Program name", &cursor_p_r1, tfield_s, g_a.s.gui_params.gen.program_name, PROGRAM_NAME_CAPACITY);
 
     if (draw_dropdown(
                 "Open", &cursor_p_r1,
@@ -454,8 +432,8 @@ void draw_tab_synth(Vector2* cursor_p) {
 
     set_gui_dir(GD_HORIZONTAL);
 
-    draw_knob("Amp", &cursor_p_r2, &g_a.s.params.amp, 0.0f, 1.0f, &g_a.s.params.rw);
-    draw_knob("Pan", &cursor_p_r2, &g_a.s.params.pan, 0.0f, 1.0f, &g_a.s.params.rw);
+    draw_knob("Amp", &cursor_p_r2, &g_a.s.gui_params.gen.amp, 0.0f, 1.0f, NULL);
+    draw_knob("Pan", &cursor_p_r2, &g_a.s.gui_params.gen.pan, 0.0f, 1.0f, NULL);
 
     cursor_p->y += KNOB_SIZE_H + GUI_GAP;
     Vector2 cursor_p_r3 = *cursor_p;
@@ -469,37 +447,24 @@ void draw_tab_synth(Vector2* cursor_p) {
 void draw_tab_osc(Vector2* cursor_p) {
     Vector2 wave_s = {(GetScreenWidth() - 2 * GUI_GAP) / 2.0f - GUI_GAP, WAVE_SIZE_H - 50};
 
-    for (size_t i = 0; i < ARRAY_SIZE(g_a.s.osc_arr); i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(g_a.s.gui_params.osc_arr); i++) {
         Vector2 split_cursor_p = {
             cursor_p->x + i * (wave_s.x + GUI_GAP),
             cursor_p->y
         };
 
-        Osc *osc = &g_a.s.osc_arr[i];
-        OscParams *params = &osc->params;
+        OscParams *params = &g_a.s.gui_params.osc_arr[i];
         int e = 0;
 
         push_gui_id_i(i);
 
         set_gui_dir(GD_VERTICAL);
 
-        if (draw_wave("Oscillator wave", &split_cursor_p, wave_s, osc->disp_buffer, ARRAY_SIZE(osc->disp_buffer), 0)) {
-            e = pthread_rwlock_wrlock(&params->rw);
-            if (e != 0) {
-                // TODO: Log
-                return;
-            }
-
+        if (draw_wave("Oscillator wave", &split_cursor_p, wave_s, g_a.s.osc_disp_buffer_arr[i], DISPLAY_BUFFER_SIZE, 0)) {
             params->type++;
             params->type %= OT_MAX;
 
-            e = pthread_rwlock_unlock(&params->rw);
-            if (e != 0) {
-                // TODO: Log
-                return;
-            }
-
-            prepare_osc_display(osc);
+            prepare_osc_display(params, g_a.s.osc_disp_buffer_arr[i]);
         }
 
         // 2nd Row
@@ -508,18 +473,18 @@ void draw_tab_osc(Vector2* cursor_p) {
 
         set_gui_dir(GD_HORIZONTAL);
 
-        draw_knob_i("Semitones", &split_cursor_p, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, &params->rw);
+        draw_knob_i("Semitones", &split_cursor_p, &params->semi, -OSC_SEMI_RANGE, OSC_SEMI_RANGE, NULL);
 
-        draw_knob_i("Cents", &split_cursor_p, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, &params->rw);
+        draw_knob_i("Cents", &split_cursor_p, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, NULL);
 
-        draw_toggle("Rand Phase", &split_cursor_p, &osc->voice_arr.rand_phase, &osc->voice_arr.rw);
+        draw_toggle("Rand Phase", &split_cursor_p, &params->rand_phase, NULL);
 
         split_cursor_p = cursor_p_r2;
-        draw_knob_i("Unison", &split_cursor_p, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, &params->rw);
+        draw_knob_i("Unison", &split_cursor_p, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, NULL);
 
-        draw_knob_i("Detune", &split_cursor_p, &params->detune, OSC_DETUNE_MIN, OSC_DETUNE_MAX, &params->rw);
+        draw_knob_i("Detune", &split_cursor_p, &params->detune, OSC_DETUNE_MIN, OSC_DETUNE_MAX, NULL);
 
-        draw_knob("Volume", &split_cursor_p, &params->volume, 0.0f, 1.0f, &params->rw);
+        draw_knob("Volume", &split_cursor_p, &params->volume, 0.0f, 1.0f, NULL);
 
         pop_gui_id();
     }
@@ -539,9 +504,9 @@ void draw_tab_env(Vector2* cursor_p) {
     Vector2 split_cursor_p = {0};
     bool updated = false;
 
-    for (size_t i = 0; i < ARRAY_SIZE(g_a.s.env_arr); i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(g_a.s.gui_params.env_arr); i++) {
         updated = false;
-        env = &g_a.s.env_arr[i];
+        env = &g_a.s.gui_params.env_arr[i];
         split_cursor_p.x = cursor_p->x + (i % 2) * (wave_s.x + GUI_GAP);
         split_cursor_p.y = cursor_p->y + (size_t)(i / 2) * (wave_s.y + GUI_GAP);
 
@@ -551,13 +516,13 @@ void draw_tab_env(Vector2* cursor_p) {
         draw_text(label_arr[i], &split_cursor_p);
 
         set_gui_dir(GD_HORIZONTAL);
-        updated |= draw_knob("Attack", &split_cursor_p, &env->attack, ENV_A_MIN, ENV_A_MAX, &env->rw);
-        updated |= draw_knob("Decay", &split_cursor_p, &env->decay, ENV_D_MIN, ENV_D_MAX, &env->rw);
-        updated |= draw_knob("Sustain", &split_cursor_p, &env->sustain, 0.0f, 1.0f, &env->rw);
-        updated |= draw_knob("Release", &split_cursor_p, &env->release, ENV_R_MIN, ENV_R_MAX, &env->rw);
+        updated |= draw_knob("Attack", &split_cursor_p, &env->attack, ENV_A_MIN, ENV_A_MAX, NULL);
+        updated |= draw_knob("Decay", &split_cursor_p, &env->decay, ENV_D_MIN, ENV_D_MAX, NULL);
+        updated |= draw_knob("Sustain", &split_cursor_p, &env->sustain, 0.0f, 1.0f, NULL);
+        updated |= draw_knob("Release", &split_cursor_p, &env->release, ENV_R_MIN, ENV_R_MAX, NULL);
 
         if (updated) {
-            prepare_env_display(env);
+            prepare_env_display(env, g_a.s.env_disp_buffer_arr[i]);
         }
 
         pop_gui_id();
@@ -568,46 +533,34 @@ void draw_tab_env(Vector2* cursor_p) {
 
     draw_wave(
             "ENV0 Wave", &split_cursor_p, wave_s,
-            g_a.s.env_arr[0].disp_buffer, DISPLAY_BUFFER_SIZE, 0);
+            g_a.s.env_disp_buffer_arr[0], DISPLAY_BUFFER_SIZE, 0);
 }
 
 void draw_tab_filter(Vector2* cursor_p) {
     bool changed_type = false;
     bool changed = false;
-    FilterParams *params = &g_a.s.flt.params;
+    FilterParams *params = &g_a.s.gui_params.flt;
     Vector2 wave_s = {GetScreenWidth() - GUI_GAP, WAVE_SIZE_H};
     Vector2 slider_s = {wave_s.x, SLIDER_SIZE_H};
 
     set_gui_dir(GD_VERTICAL);
-    changed_type = draw_wave("Filter frequency response", cursor_p, wave_s, g_a.s.flt.disp_buffer, DISPLAY_BUFFER_SIZE, 0);
+    changed_type = draw_wave("Filter frequency response", cursor_p, wave_s, g_a.s.flt_disp_buffer, DISPLAY_BUFFER_SIZE, 0);
     if (changed_type) {
         changed |= true;
 
-        int e = pthread_rwlock_wrlock(&params->rw);
-        if (e != 0) {
-            // TODO: Log
-            return;
-        }
-
         params->type++;
         params->type %= FT_MAX;
-
-        e = pthread_rwlock_unlock(&params->rw);
-        if (e != 0) {
-            // TODO: Log
-            return;
-        }
     }
 
-    changed |= draw_slider("Cutoff", cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, &params->rw);
+    changed |= draw_slider("Cutoff", cursor_p, slider_s, &params->cutoff, FLT_CUTOFF_MIN, FLT_CUTOFF_MAX, GS_LOG, NULL);
 
     set_gui_dir(GD_HORIZONTAL);
-    changed |= draw_knob("Resonance", cursor_p, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, &params->rw);
-    changed |= draw_knob("Gain", cursor_p, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, &params->rw);
-    changed |= draw_knob("ENV2 Intensity", cursor_p, &params->env2_int, FLT_INT_MIN, FLT_INT_MAX, &params->rw);
+    changed |= draw_knob("Resonance", cursor_p, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, NULL);
+    changed |= draw_knob("Gain", cursor_p, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, NULL);
+    changed |= draw_knob("ENV2 Intensity", cursor_p, &params->env2_int, FLT_INT_MIN, FLT_INT_MAX, NULL);
 
     if (changed) {
-        prepare_filter_display(&g_a.s.flt);
+        prepare_filter_display(&g_a.s.gui_params.flt, g_a.s.flt_disp_buffer);
     }
 }
 
@@ -647,12 +600,8 @@ void draw_tab_effects(Vector2* cursor_p) {
     Vector2 cursor_r1 = *cursor_p;
     set_gui_dir(GD_HORIZONTAL);
 
-    draw_knob("Wet/Dry", &cursor_r1,
-            &g_a.s.distortion.wet_dry_ratio, 0.0f, 1.0f,
-            &g_a.s.distortion.rw);
-    draw_knob("Gain", &cursor_r1, &g_a.s.distortion.gain,
-            DISTORTION_GAIN_MIN, DISTORTION_GAIN_MAX,
-            &g_a.s.distortion.rw);
+    draw_knob("Wet/Dry", &cursor_r1, &g_a.s.gui_params.distortion.wet_dry_ratio, 0.0f, 1.0f, NULL);
+    draw_knob("Gain", &cursor_r1, &g_a.s.gui_params.distortion.gain, DISTORTION_GAIN_MIN, DISTORTION_GAIN_MAX, NULL);
 
     cursor_p->y += KNOB_SIZE_H + GUI_GAP;
 
@@ -667,16 +616,16 @@ void draw_tab_effects(Vector2* cursor_p) {
     set_gui_dir(GD_HORIZONTAL);
 
     draw_knob("Wet/Dry", &cursor_r2,
-            &g_a.s.delay.wet_dry_ratio, 0.0f, 1.0f,
-            &g_a.s.delay.rw);
+            &g_a.s.gui_params.delay.wet_dry_ratio, 0.0f, 1.0f,
+            NULL);
 
     draw_knob("Feedback", &cursor_r2,
-            &g_a.s.delay.feedback, 0.0f, 1.0f,
-            &g_a.s.delay.rw);
+            &g_a.s.gui_params.delay.feedback, 0.0f, 1.0f,
+            NULL);
 
     draw_knob("Delay (seconds)", &cursor_r2,
-            &g_a.s.delay.delay_s, DELAY_S_MIN, DELAY_S_MAX,
-            &g_a.s.delay.rw);
+            &g_a.s.gui_params.delay.delay_s, DELAY_S_MIN, DELAY_S_MAX,
+            NULL);
 
     pop_gui_id();
 }
@@ -725,11 +674,9 @@ void process_midi() {
             voice_update.released, voice_update.v.key_idx, voice_update.v.velocity);
 
         if (voice_update.released) {
-            voice_release_key(&g_a.s.voice_arr, voice_update.v.key_idx);
-            synth_release_voice(&g_a.s, voice_update.v.key_idx);
+            voice_release_key(&g_a.s.gui_params.voice_arr, voice_update.v.key_idx);
         } else {
-            voice_hold_key(&g_a.s.voice_arr, true, voice_update.v.key_idx, voice_update.v.velocity, &v);
-            synth_add_voice(&g_a.s, v);
+            voice_hold_key(&g_a.s.gui_params.voice_arr, true, voice_update.v.key_idx, voice_update.v.velocity, &v);
         }
     }
 }
@@ -801,9 +748,11 @@ int main(void) {
             ClearBackground(BG_COLOR);
 
             draw_ui();
-
-            log_flush();
         EndDrawing();
+
+        update_synth_params(&g_a.s);
+
+        log_flush();
     }
 
 #ifndef PLATFORM_ANDROID

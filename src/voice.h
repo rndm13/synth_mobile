@@ -2,8 +2,9 @@
 
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-#define VOICE_MAX_COUNT 16
+#define VOICE_MAX_COUNT 32
 
 #define KEY_IDX_INVALID -1
 #define VOICE_IDX_INVALID -1
@@ -21,14 +22,13 @@
 // Voices that are currently held on a virtual keyboard
 typedef struct Voice {
     bool midi;
+    int8_t key_idx;
+    uint8_t velocity;
     float freq;
-    int key_idx;
-    int velocity;
+    uint32_t id;
 } Voice;
 
 typedef struct VoiceArr {
-    pthread_rwlock_t rw;
-
     size_t voice_count;
     Voice voice_arr[VOICE_MAX_COUNT];
 } VoiceArr;
@@ -42,24 +42,18 @@ void voice_release_key(VoiceArr *v, int k_idx);
 // Voices that are currently played by oscillators.
 // Can last longer than the voices that are held.
 typedef struct OscVoice {
-    // Initial
-    Voice voice;
-    size_t unison_idx;
-
-    // Once during runtime
-    size_t start_sample_idx;
     bool released;
-    size_t release_sample_idx;
     bool dead;
+    Voice voice;
 
-    // Private data for oscillator
+    size_t unison_idx;
+    size_t start_sample_idx;
+    size_t release_sample_idx;
+
     int wave_idx;
 } OscVoice;
 
 typedef struct OscVoiceArr {
-    pthread_rwlock_t rw;
-
-    bool rand_phase;
     size_t osc_voice_count;
     OscVoice osc_voice_arr[VOICE_MAX_COUNT];
 } OscVoiceArr;
@@ -67,8 +61,8 @@ typedef struct OscVoiceArr {
 void osc_voice_arr_init(OscVoiceArr *ov);
 void osc_voice_arr_deinit(OscVoiceArr *v);
 void osc_voice_remove(OscVoiceArr *ov, int ov_idx);
-void osc_voice_add(OscVoiceArr *ov, Voice v, size_t start_idx);
-void osc_voice_add_unison(OscVoiceArr *ov, Voice v, size_t cnt, size_t start_idx);
+void osc_voice_add(OscVoiceArr *ov, Voice v, size_t start_idx, size_t unison_idx, bool rand_phase);
+void osc_voice_add_unison(OscVoiceArr *ov, Voice v, size_t cnt, size_t start_idx, bool rand_phase);
 void osc_voice_release(OscVoiceArr *ov, int k_idx, size_t release_idx);
 OscVoice* osc_voice_get_last(OscVoiceArr *ov);
 void osc_voice_gc(OscVoiceArr *ov);

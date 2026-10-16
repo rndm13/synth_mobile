@@ -1,7 +1,5 @@
 #pragma once
 
-#include <pthread.h>
-
 #include "voice.h"
 #include "settings.h"
 #include "utils.h"
@@ -18,8 +16,7 @@ typedef enum OscType {
 } OscType;
 
 typedef struct OscParams {
-    pthread_rwlock_t rw;
-
+    bool rand_phase;
     OscType type;
     int semi;
     int cents;
@@ -29,19 +26,15 @@ typedef struct OscParams {
     int detune;
 } OscParams;
 
-typedef struct Osc {
-    // RW protected
-    OscParams params;
+typedef struct OscState {
     OscVoiceArr voice_arr;
-
-    // Output
-    float disp_buffer[DISPLAY_BUFFER_SIZE];
-} Osc;
+} OscState;
 
 float calc_osc_value(OscType type, int wave_idx, int wave_length);
-void osc_add_voice(Osc* osc, Voice new_voice, size_t start_idx);
-void prepare_osc_display(Osc* osc);
 float calc_semi_mul(int semi);
 float calc_cents_mul(float cents);
-void init_osc(Osc* osc);
-void deinit_osc(Osc* osc);
+
+void osc_add_voice(const OscParams* params, OscState* osc, Voice new_voice, size_t start_idx);
+void prepare_osc_display(const OscParams* osc, float disp_buffer[DISPLAY_BUFFER_SIZE]);
+void init_osc_params(OscParams* osc);
+void init_osc_state(OscState* osc);

@@ -5,21 +5,15 @@
 #include <stdio.h>
 
 #include "filter.h"
+#include "log.h"
 #include "osc.h"
 #include "settings.h"
 #include "voice.h"
 
-void init_synth(Synth* s) {
-    int e = 0;
-
-    e = pthread_rwlock_init(&s->params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
-
-    snprintf(s->program_name, PROGRAM_NAME_CAPACITY, "%s", PROGRAM_NAME_INIT);
-    s->params.amp = 0.2;
-    s->params.pan = 0.5f;
+void init_synth_params(SynthParams* s) {
+    snprintf(s->gen.program_name, PROGRAM_NAME_CAPACITY, "%s", PROGRAM_NAME_INIT);
+    s->gen.amp = 0.2;
+    s->gen.pan = 0.5f;
     voice_arr_init(&s->voice_arr);
 
     for (size_t i = 0; i < ARRAY_SIZE(s->env_arr); i++) {
@@ -27,10 +21,10 @@ void init_synth(Synth* s) {
     }
 
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
-        init_osc(&s->osc_arr[i]);
+        init_osc_params(&s->osc_arr[i]);
     }
 
-    init_filter(&s->flt);
+    init_filter_params(&s->flt);
 
     s->distortion.wet_dry_ratio = 0.0f;
     s->distortion.gain = DISTORTION_GAIN_MIN;
@@ -38,75 +32,107 @@ void init_synth(Synth* s) {
     s->delay.wet_dry_ratio = 0.0f;
     s->delay.feedback = 0;
     s->delay.delay_s = DELAY_S_MIN;
+}
+
+
+void init_synth_state(const SynthParams *p, SynthState* s) {
+    for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
+        init_osc_state(&s->osc_arr[i]);
+    }
+
+    init_filter_state(&p->flt, &s->flt);
+
     s->sample_idx = 0;
-
-    e = pthread_rwlock_init(&s->distortion.rw, NULL);
-    if (e != 0) {
-        return;
-    }
 }
 
-void deinit_synth(Synth* s) {
-    pthread_rwlock_destroy(&s->params.rw);
-
-    voice_arr_deinit(&s->voice_arr);
-
-    for (size_t i = 0; i < ARRAY_SIZE(s->env_arr); i++) {
-        deinit_env(&s->env_arr[i]);
-    }
-
+static
+void synth_add_voice(const SynthParams* p, SynthState* s, Voice new_voice) {
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
-        deinit_osc(&s->osc_arr[i]);
-    }
-
-    deinit_filter(&s->flt);
-
-    pthread_rwlock_destroy(&s->distortion.rw);
-}
-
-void synth_add_voice(Synth* s, Voice new_voice) {
-    for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
-        osc_add_voice(&s->osc_arr[i], new_voice, s->sample_idx);
+        osc_add_voice(&p->osc_arr[i], &s->osc_arr[i], new_voice, s->sample_idx);
     }
 }
 
-void synth_release_voice(Synth* s, int k_idx) {
+static
+void synth_release_voice(SynthState* s, int k_idx) {
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
         osc_voice_release(&s->osc_arr[i].voice_arr, k_idx, s->sample_idx);
     }
 }
 
-void synth_gc_voice(Synth* s) {
+void synth_gc_voice_arr(SynthState* s) {
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
         osc_voice_gc(&s->osc_arr[i].voice_arr);
     }
 }
 
-void update_osc_voice(const Synth* s, const Osc* osc, Env* env, OscVoice* osc_voice, float wave_freq, float* buffer, size_t n) {
+void synth_update_voice_arr(const SynthParams* p, SynthState* s) {
+    size_t i = 0;
+    size_t v = 0;
+    size_t o = 0;
+    bool found = false;
+
+    synth_gc_voice_arr(s);
+
+    // TODO: Optimize this
+    for (i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
+        /* Release oscillator voices */
+        for (o = 0; o < s->osc_arr[i].voice_arr.osc_voice_count; o++) {
+            found = false;
+
+            for (v = 0; v < p->voice_arr.voice_count; v++) {
+                if (s->osc_arr[i].voice_arr.osc_voice_arr[o].voice.id == p->voice_arr.voice_arr[v].id) {
+                    found = true;
+
+                    break;
+                }
+            }
+
+            if (false == found) {
+                synth_release_voice(s, s->osc_arr[i].voice_arr.osc_voice_arr[o].voice.key_idx);
+            }
+        }
+
+        /* Add new oscillator voices */
+        for (v = 0; v < p->voice_arr.voice_count; v++) {
+            found = false;
+
+            for (o = 0; o < s->osc_arr[i].voice_arr.osc_voice_count; o++) {
+                if (s->osc_arr[i].voice_arr.osc_voice_arr[o].voice.id == p->voice_arr.voice_arr[v].id) {
+                    found = true;
+
+                    break;
+                }
+            }
+
+            if (false == found) {
+                synth_add_voice(p, s, p->voice_arr.voice_arr[v]);
+            }
+        }
+    }
+}
+
+void update_osc_voice(SynthState* s, const OscParams* params, Env* env, OscVoice* osc_voice, float wave_freq) {
     Voice voice = osc_voice->voice;
 
     float vel_mul = (float)voice.velocity / MAX_VELOCITY;
     float env_val = 1.0f;
 
-    for (int j = 0; j < n; j++) {
-        float wave_length = SAMPLE_RATE / wave_freq;
+    for (int j = 0; j < s->sample_buffer_size; j++) {
+        int wave_length = SAMPLE_RATE / wave_freq;
         double dt = j / (float)SAMPLE_RATE;
-        float osc_value = calc_osc_value(osc->params.type, osc_voice->wave_idx, wave_length);
+        float osc_value = calc_osc_value(params->type, osc_voice->wave_idx, wave_length);
 
         env_val = calc_env_value(s->sample_idx + j, env, osc_voice);
         if (osc_voice->released && FloatEquals(env_val, 0)) {
             osc_voice->dead = true;
         }
 
-        buffer[j] += osc->params.volume * env_val * vel_mul * osc_value;
-        osc_voice->wave_idx++;
-        if (osc_voice->wave_idx >= wave_length) {
-            osc_voice->wave_idx = 0;
-        }
+        s->sample_buffer[j] += params->volume * env_val * vel_mul * osc_value;
+        osc_voice->wave_idx = (osc_voice->wave_idx + 1) % wave_length;
     }
 }
 
-void update_osc(const Synth* s, Osc* osc, Env* env, float* buffer, size_t n) {
+void update_osc(SynthState* s, const OscParams* params, OscState* osc, Env* env) {
     OscVoiceArr *ova = &osc->voice_arr;
     OscVoice *osc_voice = NULL;
     Voice voice = {};
@@ -117,57 +143,26 @@ void update_osc(const Synth* s, Osc* osc, Env* env, float* buffer, size_t n) {
     float semi_mul = 0;
     int e = 0;
 
-    e = pthread_rwlock_rdlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    if (FloatEquals(osc->params.volume, 0.0f)) {
-        goto params_unlock;
-    }
-
-    e = pthread_rwlock_rdlock(&ova->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
     for (int v = 0; v < ova->osc_voice_count; v++) {
         osc_voice = &ova->osc_voice_arr[v];
         voice = osc_voice->voice;
 
-        detune_offset = osc_voice->unison_idx - (osc->params.unison - 1) / 2.0;
-        detune_mul = calc_cents_mul(osc->params.detune * detune_offset);
-        cents_mul = calc_cents_mul(osc->params.cents);
-        semi_mul = calc_semi_mul(osc->params.semi);
+        detune_offset = osc_voice->unison_idx - (params->unison - 1) / 2.0;
+        detune_mul = calc_cents_mul(params->detune * detune_offset);
+        cents_mul = calc_cents_mul(params->cents);
+        semi_mul = calc_semi_mul(params->semi);
 
         wave_freq = voice.freq * cents_mul * semi_mul * detune_mul;
-        update_osc_voice(s, osc, env, osc_voice, wave_freq, buffer, n);
-    }
-
-    e = pthread_rwlock_unlock(&ova->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-params_unlock:
-    e = pthread_rwlock_unlock(&osc->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
+        update_osc_voice(s, params, env, osc_voice, wave_freq);
     }
 }
 
-void update_filter(const Synth* s, Filter* flt, Env* env, OscVoice* last_osc_voice, float* buffer, size_t n) {
-    FilterParams params = flt->params;
-    BiquadFilterParams biquad = {};
+void update_filter(SynthState* s, const FilterParams* params, FilterState* flt) {
     double env_val = 0.0f;
     double time = 0.0f;
     double release_time = 0.0f;
 
-    if (params.type == FT_DISABLED) {
+    if (params->type == FT_DISABLED) {
         for (size_t i = 0; i < ARRAY_SIZE(flt->x); i++) {
             flt->x[i] = 0;
         }
@@ -187,19 +182,10 @@ void update_filter(const Synth* s, Filter* flt, Env* env, OscVoice* last_osc_voi
         return;
     }
 
-    if (NULL != last_osc_voice) {
-        env_val = calc_env_value(s->sample_idx, env, last_osc_voice);
-
-        params.cutoff = Clamp(env_val * params.env2_int + params.cutoff,
-                FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
-    }
-
-    calc_biquad_filter_params(&params, &biquad);
-
-    upsample_filter_u(flt, buffer, n);
+    upsample_filter(flt, s->sample_buffer, s->sample_buffer_size);
 
     // Converts the buffer data before using it
-    for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
+    for (size_t i = 0; i < s->sample_buffer_size * FLT_OVERSAMPLING; i++) {
         // Move old state
         flt->y[2] = flt->y[1];
         flt->y[1] = flt->y[0];
@@ -208,107 +194,53 @@ void update_filter(const Synth* s, Filter* flt, Env* env, OscVoice* last_osc_voi
 
         flt->x[0] = flt->oversampled_buffer[i];
         flt->y[0] =
-            biquad.b[0] * flt->x[0] +
-            biquad.b[1] * flt->x[1] +
-            biquad.b[2] * flt->x[2] -
-            biquad.a[1] * flt->y[1] -
-            biquad.a[2] * flt->y[2] +
+            flt->biquad.b[0] * flt->x[0] +
+            flt->biquad.b[1] * flt->x[1] +
+            flt->biquad.b[2] * flt->x[2] -
+            flt->biquad.a[1] * flt->y[1] -
+            flt->biquad.a[2] * flt->y[2] +
             EPSILON; // Anti-denormal offset
 
         flt->oversampled_buffer[i] = flt->y[0];
     }
 
-    downsample_filter_u(flt, buffer, n);
+    downsample_filter(flt, s->sample_buffer, s->sample_buffer_size);
 }
 
-void update_distortion(Distortion* d, float* buffer, size_t n) {
+void update_distortion(SynthState* s, const DistortionParams* d) {
     float wet = 0.0f;
 
-    int e = pthread_rwlock_rdlock(&d->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
+    for (size_t i = 0; i < s->sample_buffer_size; i++) {
+        wet = tanh(s->sample_buffer[i] * d->gain);
+
+        s->sample_buffer[i] = s->sample_buffer[i] * (1 - d->wet_dry_ratio) + wet * d->wet_dry_ratio;
     }
 
-    if (d->wet_dry_ratio == 0) {
-        goto unlock;
-    }
-
-    for (size_t i = 0; i < n; i++) {
-        wet = tanh(buffer[i] * d->gain);
-        buffer[i] =
-            buffer[i] * (1 - d->wet_dry_ratio) +
-            wet * d->wet_dry_ratio;
-    }
-
-    for (size_t i = 0; i < n; i++) {
-        buffer[i] = tanh(buffer[i]);
-    }
-
-unlock:
-    e = pthread_rwlock_unlock(&d->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
+    for (size_t i = 0; i < s->sample_buffer_size; i++) {
+        s->sample_buffer[i] = tanh(s->sample_buffer[i]);
     }
 }
 
-void update_delay(Delay* d, float* buffer, size_t n) {
+void update_delay(SynthState* s, const DelayParams* params, DelayState* d) {
     float wet = 0.0f;
     int delay_length = 0;
 
-    int e = pthread_rwlock_rdlock(&d->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
+    delay_length = params->delay_s * SAMPLE_RATE;
 
-    delay_length = d->delay_s * SAMPLE_RATE;
-
-    if (d->wet_dry_ratio == 0) {
-        goto unlock;
-    }
-
-
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < s->sample_buffer_size; i++) {
         wet = d->buffer[(d->buffer_idx + delay_length - 1) % delay_length];
-        d->buffer[d->buffer_idx] = buffer[i] + d->buffer[d->buffer_idx] * d->feedback;
+        d->buffer[d->buffer_idx] = s->sample_buffer[i] + d->buffer[d->buffer_idx] * params->feedback;
 
         d->buffer_idx++;
         d->buffer_idx %= delay_length;
 
-        buffer[i] =
-            buffer[i] * (1 - d->wet_dry_ratio) +
-            wet * d->wet_dry_ratio;
-    }
-
-    for (size_t i = 0; i < n; i++) {
-        buffer[i] = tanh(buffer[i]);
-    }
-
-unlock:
-    e = pthread_rwlock_unlock(&d->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
+        s->sample_buffer[i] = s->sample_buffer[i] * (1 - params->wet_dry_ratio) + wet * params->wet_dry_ratio;
     }
 }
 
-void update_synth_amp(Synth* s, float* buffer, size_t n) {
-    int e = pthread_rwlock_rdlock(&s->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
-
-    for (int i = 0; i < n; i++) {
-        buffer[i] = s->params.amp * buffer[i];
-    }
-
-    e = pthread_rwlock_unlock(&s->params.rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
+void update_synth_amp(SynthState* s, const SynthGeneralParams* params) {
+    for (int i = 0; i < s->sample_buffer_size; i++) {
+        s->sample_buffer[i] = params->amp * s->sample_buffer[i];
     }
 }
 
@@ -325,49 +257,70 @@ timespec_t duration_from(timespec_t start_time) {
     return end_time;
 }
 
-void update_synth(Synth* s, double global_time, float* buffer, size_t n) {
-    OscVoice* ov = osc_voice_get_last(&s->osc_arr[0].voice_arr);
+void update_synth_state(Synth* s) {
+    if (false == s->update_params) {
+        return;
+    }
+
+    s->locked_params = s->gui_params;
+    s->update_params = false;
+
+    synth_update_voice_arr(&s->locked_params, &s->state);
+
+    calc_biquad_filter_params(&s->locked_params.flt, &s->state.flt.biquad);
+}
+
+void update_synth_params(Synth* s) {
+    s->update_params = true;
+}
+
+void update_synth(Synth* s, float* buffer, size_t n) {
     timespec_t start_time = {0};
     timespec_t section_time = {0};
 
-    for (size_t i = 0; i < n; i++) {
-        buffer[i] = 0.0f;
+    s->state.sample_buffer = buffer;
+    s->state.sample_buffer_size = n;
+
+    for (size_t i = 0; i < s->state.sample_buffer_size; i++) {
+        s->state.sample_buffer[i] = 0.0f;
     }
 
-    s->prof.cur_stage = 0;
+    update_synth_state(s);
+
+    s->state.prof.cur_stage = 0;
     timespec_get(&start_time, TIME_UTC);
 
     timespec_get(&section_time, TIME_UTC);
-    update_osc(s, &s->osc_arr[0], &s->env_arr[0], buffer, n);
-    s->prof.osc_time[0] = duration_from(section_time);
-    s->prof.cur_stage++;
+    update_osc(&s->state, &s->locked_params.osc_arr[0], &s->state.osc_arr[0], &s->locked_params.env_arr[0]);
+    s->state.prof.osc_time[0] = duration_from(section_time);
+    s->state.prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
-    update_osc(s, &s->osc_arr[1], &s->env_arr[1], buffer, n);
-    s->prof.osc_time[1] = duration_from(section_time);
-    s->prof.cur_stage++;
+    update_osc(&s->state, &s->locked_params.osc_arr[1], &s->state.osc_arr[1], &s->locked_params.env_arr[0]);
+    s->state.prof.osc_time[1] = duration_from(section_time);
+    s->state.prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
-    update_filter(s, &s->flt, &s->env_arr[2], ov, buffer, n);
-    s->prof.flt_time = duration_from(section_time);
-    s->prof.cur_stage++;
+    update_filter(&s->state, &s->locked_params.flt, &s->state.flt);
+    s->state.prof.flt_time = duration_from(section_time);
+    s->state.prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
-    update_distortion(&s->distortion, buffer, n);
-    s->prof.distortion_time = duration_from(section_time);
-    s->prof.cur_stage++;
+    update_distortion(&s->state, &s->locked_params.distortion);
+    s->state.prof.distortion_time = duration_from(section_time);
+    s->state.prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
-    update_delay(&s->delay, buffer, n);
-    s->prof.delay_time = duration_from(section_time);
-    s->prof.cur_stage++;
+    update_delay(&s->state, &s->locked_params.delay, &s->state.delay);
+    s->state.prof.delay_time = duration_from(section_time);
+    s->state.prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
-    update_synth_amp(s, buffer, n);
-    s->prof.amp_time = duration_from(section_time);
-    s->prof.cur_stage++;
+    update_synth_amp(&s->state, &s->locked_params.gen);
+    s->state.prof.amp_time = duration_from(section_time);
+    s->state.prof.cur_stage++;
 
-    s->prof.total_time = duration_from(start_time);
+    s->state.prof.total_time = duration_from(start_time);
 
-    s->sample_idx += n;
+    s->state.sample_idx += s->state.sample_buffer_size;
 }

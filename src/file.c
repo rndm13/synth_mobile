@@ -82,19 +82,19 @@ int init_program_selection(const char* dirpath, ProgramSelection* ps) {
     return e;
 }
 
-static void add_program(const Synth* s, ProgramSelection* ps) {
+static void add_program(const SynthParams* s, ProgramSelection* ps) {
     char filepath[FILEPATH_CAPACITY] = {0};
 
     snprintf(
         filepath, FILEPATH_CAPACITY,
-        "%s/%s%s", PROGRAM_PATH, s->program_name, PROGRAM_EXTENSION);
+        "%s/%s%s", PROGRAM_PATH, s->gen.program_name, PROGRAM_EXTENSION);
 
     snprintf(
         ps->filepath_arr[ps->program_count],
         FILEPATH_CAPACITY, "%s", filepath);
     snprintf(
         ps->program_name_arr[ps->program_count],
-        PROGRAM_NAME_CAPACITY, "%s", s->program_name);
+        PROGRAM_NAME_CAPACITY, "%s", s->gen.program_name);
 
     ps->selected_program_idx = ps->program_count;
     ps->program_count++;
@@ -133,17 +133,16 @@ static int write_ini_value_f(FILE* file, float value, const char* section, const
     return 0;
 }
 
-static int write_ini_file(Synth *s, const char* filepath) {
+static int write_ini_file(SynthParams *s, const char* filepath) {
     char cur_section[INI_SECTION_CAPACITY] = {};
     int e = 0;
     FILE* file = NULL;
-    OscVoiceArr *ov = NULL;
     OscParams *oparams = NULL;
     Env *eparams = NULL;
     FilterParams *fparams = NULL;
-    SynthParams *sparams = NULL;
-    Distortion *distparams = NULL;
-    Delay *delparams = NULL;
+    SynthGeneralParams *sparams = NULL;
+    DistortionParams *distparams = NULL;
+    DelayParams *delparams = NULL;
 
     file = fopen(filepath, "w");
 
@@ -154,8 +153,7 @@ static int write_ini_file(Synth *s, const char* filepath) {
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "osc", i);
 
-        oparams = &s->osc_arr[i].params;
-        ov = &s->osc_arr[i].voice_arr;
+        oparams = &s->osc_arr[i];
 
         e = write_ini_value_i(file, oparams->cents, cur_section, "cents");
         if (e != 0) {
@@ -187,7 +185,7 @@ static int write_ini_file(Synth *s, const char* filepath) {
             goto close_file;
         }
 
-        e = write_ini_value_i(file, ov->rand_phase, cur_section, "rand_phase");
+        e = write_ini_value_i(file, oparams->rand_phase, cur_section, "rand_phase");
         if (e != 0) {
             goto close_file;
         }
@@ -222,7 +220,7 @@ static int write_ini_file(Synth *s, const char* filepath) {
     {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s%d", "flt", 0);
 
-        fparams = &s->flt.params;
+        fparams = &s->flt;
 
         e = write_ini_value_i(file, fparams->type, cur_section, "type");
         if (e != 0) {
@@ -253,7 +251,7 @@ static int write_ini_file(Synth *s, const char* filepath) {
     {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "synth");
 
-        sparams = &s->params;
+        sparams = &s->gen;
 
         e = write_ini_value_f(file, sparams->amp, cur_section, "amp");
         if (e != 0) {
@@ -265,7 +263,7 @@ static int write_ini_file(Synth *s, const char* filepath) {
             goto close_file;
         }
 
-        e = write_ini_value_s(file, s->program_name, cur_section, "name");
+        e = write_ini_value_s(file, sparams->program_name, cur_section, "name");
         if (e != 0) {
             goto close_file;
         }
@@ -320,7 +318,7 @@ int save_program(Synth *s, ProgramSelection* ps) {
 
     for (size_t i = 0; i < ps->program_count; i++) {
         current_program = ps->program_name_arr[i];
-        if (0 == strncmp(current_program, s->program_name, PROGRAM_NAME_CAPACITY)) {
+        if (0 == strncmp(current_program, s->gui_params.gen.program_name, PROGRAM_NAME_CAPACITY)) {
             ps->selected_program_idx = i;
             found = true;
             break;
@@ -328,45 +326,22 @@ int save_program(Synth *s, ProgramSelection* ps) {
     }
 
     if (!found) {
-        add_program(s, ps);
+        add_program(&s->gui_params, ps);
     }
 
-    pthread_rwlock_rdlock(&s->osc_arr[0].params.rw);
-    pthread_rwlock_rdlock(&s->osc_arr[1].params.rw);
-    pthread_rwlock_rdlock(&s->osc_arr[0].voice_arr.rw);
-    pthread_rwlock_rdlock(&s->osc_arr[1].voice_arr.rw);
-    pthread_rwlock_rdlock(&s->env_arr[0].rw);
-    pthread_rwlock_rdlock(&s->env_arr[1].rw);
-    pthread_rwlock_rdlock(&s->env_arr[2].rw);
-    pthread_rwlock_rdlock(&s->flt.params.rw);
-    pthread_rwlock_rdlock(&s->params.rw);
-
-    e = write_ini_file(s, ps->filepath_arr[ps->selected_program_idx]);
-
-    pthread_rwlock_unlock(&s->osc_arr[0].params.rw);
-    pthread_rwlock_unlock(&s->osc_arr[1].params.rw);
-    pthread_rwlock_unlock(&s->osc_arr[0].voice_arr.rw);
-    pthread_rwlock_unlock(&s->osc_arr[1].voice_arr.rw);
-    pthread_rwlock_unlock(&s->env_arr[0].rw);
-    pthread_rwlock_unlock(&s->env_arr[1].rw);
-    pthread_rwlock_unlock(&s->env_arr[2].rw);
-    pthread_rwlock_unlock(&s->flt.params.rw);
-    pthread_rwlock_unlock(&s->params.rw);
+    e = write_ini_file(&s->gui_params, ps->filepath_arr[ps->selected_program_idx]);
 
     return e;
 }
 
-static int read_ini_value(
-    void* user, const char* section, const char* name,
-    const char* value) {
-    Synth *s = (Synth*)user;
+static int read_ini_value(void* user, const char* section, const char* name, const char* value) {
+    SynthParams *s = (SynthParams*)user;
     char cur_section[INI_SECTION_CAPACITY] = {};
 
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s%zu", "osc", i);
 
-        Osc *o = &s->osc_arr[i];
-        OscParams *params = &o->params;
+        OscParams *params = &s->osc_arr[i];
 
         MATCH_I(params->cents, cur_section, "cents", section, name, value);
         MATCH_I(params->detune, cur_section, "detune", section, name, value);
@@ -374,7 +349,7 @@ static int read_ini_value(
         MATCH_I(params->semi, cur_section, "semi", section, name, value);
         MATCH_F(params->volume, cur_section, "volume", section, name, value);
         MATCH_I(params->type, cur_section, "type", section, name, value);
-        MATCH_I(o->voice_arr.rand_phase, cur_section, "rand_phase", section, name, value);
+        MATCH_I(params->rand_phase, cur_section, "rand_phase", section, name, value);
     }
 
     for (size_t i = 0; i < ARRAY_SIZE(s->env_arr); i++) {
@@ -391,7 +366,7 @@ static int read_ini_value(
     {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s%d", "flt", 0);
 
-        FilterParams *params = &s->flt.params;
+        FilterParams *params = &s->flt;
 
         MATCH_I(params->type, cur_section, "type", section, name, value);
         MATCH_F(params->cutoff, cur_section, "cutoff", section, name, value);
@@ -403,17 +378,17 @@ static int read_ini_value(
     {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "synth");
 
-        SynthParams *params = &s->params;
+        SynthGeneralParams *params = &s->gen;
 
         MATCH_F(params->amp, cur_section, "amp", section, name, value);
         MATCH_F(params->pan, cur_section, "pan", section, name, value);
-        MATCH_S(s->program_name, cur_section, "name", section, name, value);
+        MATCH_S(params->program_name, cur_section, "name", section, name, value);
     }
 
     {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "distortion");
 
-        Distortion *params = &s->distortion;
+        DistortionParams *params = &s->distortion;
 
         MATCH_F(params->wet_dry_ratio, cur_section, "wet_dry_ratio", section, name, value);
         MATCH_F(params->gain, cur_section, "gain", section, name, value);
@@ -422,7 +397,7 @@ static int read_ini_value(
     {
         snprintf(cur_section, INI_SECTION_CAPACITY, "%s", "delay");
 
-        Delay *params = &s->delay;
+        DelayParams *params = &s->delay;
 
         MATCH_F(params->wet_dry_ratio, cur_section, "wet_dry_ratio", section, name, value);
         MATCH_F(params->feedback, cur_section, "feedback", section, name, value);
@@ -434,41 +409,21 @@ static int read_ini_value(
 
 int open_program(Synth *s, const ProgramSelection* ps) {
     int e = 0;
-    pthread_rwlock_wrlock(&s->osc_arr[0].params.rw);
-    pthread_rwlock_wrlock(&s->osc_arr[1].params.rw);
-    pthread_rwlock_wrlock(&s->osc_arr[0].voice_arr.rw);
-    pthread_rwlock_wrlock(&s->osc_arr[1].voice_arr.rw);
-    pthread_rwlock_wrlock(&s->env_arr[0].rw);
-    pthread_rwlock_wrlock(&s->env_arr[1].rw);
-    pthread_rwlock_wrlock(&s->env_arr[2].rw);
-    pthread_rwlock_wrlock(&s->flt.params.rw);
-    pthread_rwlock_wrlock(&s->params.rw);
+    e = ini_parse(ps->filepath_arr[ps->selected_program_idx], read_ini_value, &s->gui_params);
 
-    e = ini_parse(ps->filepath_arr[ps->selected_program_idx], read_ini_value, s);
-
-    pthread_rwlock_unlock(&s->osc_arr[0].params.rw);
-    pthread_rwlock_unlock(&s->osc_arr[1].params.rw);
-    pthread_rwlock_unlock(&s->osc_arr[0].voice_arr.rw);
-    pthread_rwlock_unlock(&s->osc_arr[1].voice_arr.rw);
-    pthread_rwlock_unlock(&s->env_arr[0].rw);
-    pthread_rwlock_unlock(&s->env_arr[1].rw);
-    pthread_rwlock_unlock(&s->env_arr[2].rw);
-    pthread_rwlock_unlock(&s->flt.params.rw);
-    pthread_rwlock_unlock(&s->params.rw);
-
-    prepare_osc_display(&s->osc_arr[0]);
-    prepare_osc_display(&s->osc_arr[1]);
-    prepare_filter_display(&s->flt);
+    prepare_osc_display(&s->gui_params.osc_arr[0], s->osc_disp_buffer_arr[0]);
+    prepare_osc_display(&s->gui_params.osc_arr[1], s->osc_disp_buffer_arr[1]);
+    prepare_filter_display(&s->gui_params.flt, s->flt_disp_buffer);
 
     return e;
 }
 
 void randomize_program(Synth *s) {
     srand(time(NULL));
+    SynthParams *sp = &s->gui_params;
 
-    for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
-        OscParams *params = &s->osc_arr[i].params;
-        pthread_rwlock_wrlock(&params->rw);
+    for (size_t i = 0; i < ARRAY_SIZE(sp->osc_arr); i++) {
+        OscParams *params = &sp->osc_arr[i];
 
         params->cents = RAND_RANGE(-OSC_CENTS_RANGE, OSC_CENTS_RANGE);
         params->detune = RAND_RANGE(OSC_DETUNE_MIN, OSC_DETUNE_MAX);
@@ -477,55 +432,41 @@ void randomize_program(Synth *s) {
         params->volume = RAND_RANGEF(0, 1);
         params->type = RAND_RANGE(0, OT_MAX);
 
-        pthread_rwlock_unlock(&params->rw);
-
-        prepare_osc_display(&s->osc_arr[i]);
+        prepare_osc_display(&sp->osc_arr[i], s->osc_disp_buffer_arr[i]);
     }
 
-    for (size_t i = 0; i < ARRAY_SIZE(s->env_arr); i++) {
-        Env *params = &s->env_arr[i];
-        pthread_rwlock_wrlock(&params->rw);
+    for (size_t i = 0; i < ARRAY_SIZE(sp->env_arr); i++) {
+        Env *params = &sp->env_arr[i];
 
         params->attack = RAND_RANGEF(ENV_A_MIN, ENV_A_MAX);
         params->decay = RAND_RANGEF(ENV_D_MIN, ENV_D_MAX);
         params->sustain = RAND_RANGEF(0, 1);
         params->release = RAND_RANGEF(ENV_R_MIN, ENV_R_MAX);
-
-        pthread_rwlock_unlock(&params->rw);
     }
 
     {
-        FilterParams *params = &s->flt.params;
-        pthread_rwlock_wrlock(&params->rw);
+        FilterParams *params = &sp->flt;
 
         params->type = RAND_RANGE(0, FT_MAX);
         params->cutoff = RAND_RANGEF(FLT_CUTOFF_MIN, FLT_CUTOFF_MAX);
         params->resonance = RAND_RANGEF(FLT_RESONANCE_MIN, FLT_RESONANCE_MAX);
         params->gain = RAND_RANGEF(FLT_GAIN_MIN, FLT_GAIN_MAX);
 
-        pthread_rwlock_unlock(&params->rw);
-
-        prepare_filter_display(&s->flt);
+        prepare_filter_display(&sp->flt, s->flt_disp_buffer);
     }
 
     {
-        Distortion *params = &s->distortion;
-        pthread_rwlock_wrlock(&params->rw);
+        DistortionParams *params = &sp->distortion;
 
         params->wet_dry_ratio = RAND_RANGEF(0, 1);
         params->gain = RAND_RANGEF(DISTORTION_GAIN_MIN, DISTORTION_GAIN_MAX);
-
-        pthread_rwlock_unlock(&params->rw);
     }
 
     {
-        Delay *params = &s->delay;
-        pthread_rwlock_wrlock(&params->rw);
+        DelayParams *params = &sp->delay;
 
         params->wet_dry_ratio = RAND_RANGEF(0, 1);
         params->feedback = RAND_RANGEF(0.0f, 0.45f);
         params->delay_s = RAND_RANGEF(DELAY_S_MIN, DELAY_S_MAX);
-
-        pthread_rwlock_unlock(&params->rw);
     }
 }

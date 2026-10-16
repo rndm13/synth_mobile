@@ -14,15 +14,10 @@ const char* ft2str(FilterType ft) {
     return "Unknown";
 }
 
-void calc_biquad_filter_params(FilterParams* params, BiquadFilterParams* o_biquad) {
+void calc_biquad_filter_params(const FilterParams* params, BiquadFilterState* o_biquad) {
     double norm = 0.0;
-    // int e = pthread_rwlock_rdlock(&params->rw);
-    // if (e != 0) {
-    //     // TODO: Log
-    //     return;
-    // }
 
-    // double V = powf(10, fabs(params->gain) / 20);
+    double V = powf(10, fabs(params->gain) / 20);
     double K = tan(PI * params->cutoff / (double)FLT_OVERSAMPLED_RATE);
 
     o_biquad->a[0] = 1;
@@ -66,30 +61,17 @@ void calc_biquad_filter_params(FilterParams* params, BiquadFilterParams* o_biqua
         default:
             break;
     }
-
-    // e = pthread_rwlock_unlock(&params->rw);
-    // if (e != 0) {
-    //     // TODO: Log
-    //     return;
-    // }
 }
 
-void prepare_filter_display(Filter* flt) {
-    FilterParams* params = &flt->params;
-    BiquadFilterParams biquad = {0};
+void prepare_filter_display(const FilterParams* flt, float disp_buffer[DISPLAY_BUFFER_SIZE]) {
+    BiquadFilterState biquad = {0};
     int e = 0;
 
-    calc_biquad_filter_params(params, &biquad);
-
-    e = pthread_rwlock_wrlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
-    }
+    calc_biquad_filter_params(flt, &biquad);
 
     for (size_t i = 0; i < DISPLAY_BUFFER_SIZE; i++) {
-        if (params->type == FT_DISABLED) {
-            flt->disp_buffer[i] = 0.0f;
+        if (flt->type == FT_DISABLED) {
+            disp_buffer[i] = 0.0f;
             continue;
         }
 
@@ -109,18 +91,12 @@ void prepare_filter_display(Filter* flt) {
         double d_mag = cabs(den);
 
         if (d_mag < EPSILON) {
-            flt->disp_buffer[i] = -1.0f;
+            disp_buffer[i] = -1.0f;
         } else {
             double magnitude = n_mag / d_mag;
 
-            flt->disp_buffer[i] = Clamp(-log10f(magnitude), -1, 1);
+            disp_buffer[i] = Clamp(-log10f(magnitude), -1, 1);
         }
-    }
-
-    e = pthread_rwlock_unlock(&params->rw);
-    if (e != 0) {
-        // TODO: Log
-        return;
     }
 }
 
@@ -138,7 +114,7 @@ float update_fir_filter(FIRFilter *fir, float input) {
     return output;
 }
 
-void upsample_filter_u(Filter* flt, float* buffer, size_t n) {
+void upsample_filter(FilterState* flt, float* buffer, size_t n) {
     for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
         flt->oversampled_buffer[i] = 0.0f;
     }
@@ -152,7 +128,7 @@ void upsample_filter_u(Filter* flt, float* buffer, size_t n) {
     }
 }
 
-void downsample_filter_u(Filter* flt, float* buffer, size_t n) {
+void downsample_filter(FilterState* flt, float* buffer, size_t n) {
     for (size_t i = 0; i < n * FLT_OVERSAMPLING; i++) {
         flt->oversampled_buffer[i] = update_fir_filter(&flt->fir_down, flt->oversampled_buffer[i]);
     }
@@ -189,24 +165,17 @@ void init_fir_filter(FIRFilter* fir, float sample_rate) {
     }
 }
 
-void init_filter(Filter *flt) {
-    int e = pthread_rwlock_init(&flt->params.rw, NULL);
-    if (e != 0) {
-        return;
-    }
+void init_filter_params(FilterParams *flt) {
+    flt->type = FT_LPF;
+    flt->cutoff = FLT_CUTOFF_MAX;
+    flt->resonance = FLT_RESONANCE_MIN;
+    flt->gain = 0.0f;
+    flt->env2_int = 0.0f;
+}
 
-    flt->params.type = FT_LPF;
-    flt->params.cutoff = FLT_CUTOFF_MAX;
-    flt->params.resonance = FLT_RESONANCE_MIN;
-    flt->params.gain = 0.0f;
-    flt->params.env2_int = 0.0f;
-
+void init_filter_state(const FilterParams *params, FilterState *flt) {
     init_fir_filter(&flt->fir_up, FLT_OVERSAMPLED_RATE);
     init_fir_filter(&flt->fir_down, FLT_OVERSAMPLED_RATE);
 
-    prepare_filter_display(flt);
-}
-
-void deinit_filter(Filter *flt) {
-    pthread_rwlock_destroy(&flt->params.rw);
+    calc_biquad_filter_params(params, &flt->biquad);
 }
