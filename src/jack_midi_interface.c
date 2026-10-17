@@ -139,6 +139,7 @@ static void handle_received_note_event(JACKMidi *jack, const RingBufferElem* rbe
 
     voice_update.timestamp = 0; // TODO: add timestamps to all midi events
     voice_update.v.key_idx = rbe->data[1];
+    voice_update.v.key_idx -= 20;
     voice_update.v.velocity = rbe->data[2];
 
     memcpy(rbe_voice_update.data, &voice_update, sizeof(voice_update));
@@ -189,6 +190,8 @@ bool send_voice_change(JACKMidi* jack, VoiceMsg msg) {
     if (msg.released) {
         header = NOTE_OFF_HEADER;
     }
+
+    msg.v.key_idx += 20;
 
     PUSH_BYTES(header);
     PUSH_BYTES(msg.v.key_idx);
