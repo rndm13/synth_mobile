@@ -160,6 +160,10 @@ void init_app() {
     init_synth_params(&g_a.s.locked_params);
     init_synth_state(&g_a.s.gui_params, &g_a.s.state);
 
+    prepare_osc_display(&g_a.s.gui_params.osc_arr[0], g_a.s.osc_disp_buffer_arr[0]);
+    prepare_osc_display(&g_a.s.gui_params.osc_arr[1], g_a.s.osc_disp_buffer_arr[1]);
+    prepare_filter_display(&g_a.s.gui_params.flt, g_a.s.flt_disp_buffer);
+
     e = init_program_selection(PROGRAM_PATH, &g_a.program_selection);
     if (e != 0) {
         add_toast("Failed to initialize program selection: %d", e);
@@ -531,9 +535,9 @@ void draw_tab_env(Vector2* cursor_p) {
     split_cursor_p.x = cursor_p->x + wave_s.x + GUI_GAP;
     split_cursor_p.y = cursor_p->y + wave_s.y + GUI_GAP;
 
-    draw_wave(
-            "ENV0 Wave", &split_cursor_p, wave_s,
-            g_a.s.env_disp_buffer_arr[0], DISPLAY_BUFFER_SIZE, 0);
+    // draw_wave(
+    //         "ENV0 Wave", &split_cursor_p, wave_s,
+    //         g_a.s.env_disp_buffer_arr[0], DISPLAY_BUFFER_SIZE, 0);
 }
 
 void draw_tab_filter(Vector2* cursor_p) {
