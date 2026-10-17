@@ -12,7 +12,7 @@
 
 void init_synth_params(SynthParams* s) {
     snprintf(s->gen.program_name, PROGRAM_NAME_CAPACITY, "%s", PROGRAM_NAME_INIT);
-    s->gen.amp = 0.2;
+    s->gen.amp = 0.2f;
     s->gen.pan = 0.5f;
     voice_arr_init(&s->voice_arr);
 
@@ -33,7 +33,6 @@ void init_synth_params(SynthParams* s) {
     s->delay.feedback = 0;
     s->delay.delay_s = DELAY_S_MIN;
 }
-
 
 void init_synth_state(const SynthParams *p, SynthState* s) {
     for (size_t i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
@@ -214,10 +213,6 @@ void update_distortion(SynthState* s, const DistortionParams* d) {
         wet = tanh(s->sample_buffer[i] * d->gain);
 
         s->sample_buffer[i] = s->sample_buffer[i] * (1 - d->wet_dry_ratio) + wet * d->wet_dry_ratio;
-    }
-
-    for (size_t i = 0; i < s->sample_buffer_size; i++) {
-        s->sample_buffer[i] = tanh(s->sample_buffer[i]);
     }
 }
 
