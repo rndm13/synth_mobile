@@ -291,7 +291,7 @@ void update_synth(Synth* s, float* buffer, size_t n) {
     s->state.prof.cur_stage++;
 
     timespec_get(&section_time, TIME_UTC);
-    update_osc(&s->state, &s->locked_params.osc_arr[1], &s->state.osc_arr[1], &s->locked_params.env_arr[0]);
+    update_osc(&s->state, &s->locked_params.osc_arr[1], &s->state.osc_arr[1], &s->locked_params.env_arr[1]);
     s->state.prof.osc_time[1] = duration_from(section_time);
     s->state.prof.cur_stage++;
 
