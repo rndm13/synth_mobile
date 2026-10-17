@@ -76,6 +76,10 @@ void synth_update_voice_arr(const SynthParams* p, SynthState* s) {
     for (i = 0; i < ARRAY_SIZE(s->osc_arr); i++) {
         /* Release oscillator voices */
         for (o = 0; o < s->osc_arr[i].voice_arr.osc_voice_count; o++) {
+            if (s->osc_arr[i].voice_arr.osc_voice_arr[o].released) {
+                continue;
+            }
+
             found = false;
 
             for (v = 0; v < p->voice_arr.voice_count; v++) {
