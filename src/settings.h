@@ -9,14 +9,14 @@
 
 #define SAMPLE_RATE    48000
 
-#define OSC_SEMI_RANGE 12
+#define OSC_SEMI_RANGE 36
 #define OSC_CENTS_RANGE 100
 
 #define OSC_UNISON_MIN 1
 #define OSC_UNISON_MAX 8
 
-#define OSC_DETUNE_MIN 5
-#define OSC_DETUNE_MAX 300
+#define OSC_DETUNE_MIN 1
+#define OSC_DETUNE_MAX 500
 
 #define DISTORTION_GAIN_MIN 1.0f
 #define DISTORTION_GAIN_MAX 5.0f
@@ -54,8 +54,8 @@
 #define FLT_INT_MAX          +1000.0f
 
 #define DISPLAY_BUFFER_SIZE 512
-#define BUFFER_SIZE         4096
-#define FFT_BUFFER_SIZE_MUL 2
+#define BUFFER_SIZE         512
+#define FFT_BUFFER_SIZE_MUL 8
 #define FFT_BUFFER_SIZE     (BUFFER_SIZE * FFT_BUFFER_SIZE_MUL)
 
 #define MAX_VELOCITY 127
