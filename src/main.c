@@ -34,6 +34,11 @@ typedef enum Tab {
     TAB_X(X_ENUM)
 } Tab;
 
+typedef struct SynthKeyMap {
+    char keyboard;
+    int key_idx;
+} SynthKeyMap;
+
 typedef struct SynthKeyboard {
     int cur_octave;
     Rectangle key_rect_arr[KEY_COUNT];
@@ -67,6 +72,9 @@ typedef struct App {
 } App;
 
 App g_a;
+
+#define KEY_IN_OCTAVE(key_idx, oct) \
+    ((g_a.skeyboard.cur_octave + oct) * KEY_OCTAVE + (key_idx))
 
 bool key_is_black(int k) {
     static const int black_idx_arr[] = {
@@ -103,7 +111,7 @@ void update_synth_keyboard() {
         sk->key_rect_arr[i].height = 0;
     }
 
-    for (int i = sk->cur_octave * KEY_OCTAVE + KEY_C_OFF; i < sk->cur_octave * KEY_OCTAVE + KEY_C_OFF + 2 * KEY_OCTAVE; i++) {
+    for (int i = KEY_IN_OCTAVE(KEY_C_OFF, 0); i < KEY_IN_OCTAVE(KEY_C_OFF, 2); i++) {
         sk->key_rect_arr[i].width = k_w;
         sk->key_rect_arr[i].height = k_h;
 
@@ -204,7 +212,7 @@ void get_touch_points(int* t_count, Vector2 *touch_pos_arr) {
 #endif
 }
 
-void process_synth_keyboard() {
+void process_synth_mouse() {
     static Vector2 touch_pos_arr[MAX_TOUCH_POINTS] = { 0 };
     VoiceArr *va = &g_a.s.gui_params.voice_arr;
     int t_count = 0;
@@ -218,7 +226,7 @@ void process_synth_keyboard() {
             if (CheckCollisionPointRec(touch_pos_arr[i], key_rec)) {
                 Voice new_voice = {0};
 
-                bool hold = voice_hold_key(va, false, k, 127, &new_voice);
+                voice_hold_key(va, false, k, 127, &new_voice);
 
                 break; // Found a key for this touch. See next touch.
             }
@@ -243,6 +251,62 @@ void process_synth_keyboard() {
 
         if (!found) {
             voice_remove(&g_a.s.gui_params.voice_arr, v);
+        }
+    }
+}
+
+void process_synth_keyboard() {
+    size_t i = 0;
+    Voice v = {0};
+
+    static const SynthKeyMap char_to_key[] = {
+        {.keyboard = KEY_Z,         .key_idx = 4},
+        {.keyboard = KEY_S,         .key_idx = 5},
+        {.keyboard = KEY_X,         .key_idx = 6},
+        {.keyboard = KEY_D,         .key_idx = 7},
+        {.keyboard = KEY_C,         .key_idx = 8},
+        {.keyboard = KEY_V,         .key_idx = 9},
+        {.keyboard = KEY_G,         .key_idx = 10},
+        {.keyboard = KEY_B,         .key_idx = 11},
+        {.keyboard = KEY_H,         .key_idx = 12},
+        {.keyboard = KEY_N,         .key_idx = 13},
+        {.keyboard = KEY_J,         .key_idx = 14},
+        {.keyboard = KEY_M,         .key_idx = 15},
+        {.keyboard = KEY_COMMA,     .key_idx = 16},
+        {.keyboard = KEY_L,         .key_idx = 17},
+        {.keyboard = KEY_PERIOD,    .key_idx = 18},
+        {.keyboard = KEY_SEMICOLON, .key_idx = 19},
+        {.keyboard = KEY_SLASH,     .key_idx = 20},
+        {.keyboard = KEY_Q,         .key_idx = 16},
+        {.keyboard = KEY_TWO,       .key_idx = 17},
+        {.keyboard = KEY_W,         .key_idx = 18},
+        {.keyboard = KEY_THREE,     .key_idx = 19},
+        {.keyboard = KEY_E,         .key_idx = 20},
+        {.keyboard = KEY_R,         .key_idx = 21},
+        {.keyboard = KEY_FIVE,      .key_idx = 22},
+        {.keyboard = KEY_T,         .key_idx = 23},
+        {.keyboard = KEY_SIX,       .key_idx = 24},
+        {.keyboard = KEY_Y,         .key_idx = 25},
+        {.keyboard = KEY_SEVEN,     .key_idx = 26},
+        {.keyboard = KEY_U,         .key_idx = 27},
+        {.keyboard = KEY_I,         .key_idx = 28},
+        {.keyboard = KEY_NINE,      .key_idx = 29},
+        {.keyboard = KEY_O,         .key_idx = 30},
+        {.keyboard = KEY_P,         .key_idx = 31},
+    };
+
+    for (i = 0; i < ARRAY_SIZE(char_to_key); i++) {
+        if (IsKeyPressed(char_to_key[i].keyboard)) {
+            /* TODO: Add multiple origins for this */
+            voice_hold_key(&g_a.s.gui_params.voice_arr, true, KEY_IN_OCTAVE(char_to_key[i].key_idx, 0), 127, &v);
+
+            log_info("Pressed key %d %d", char_to_key[i].keyboard, KEY_IN_OCTAVE(char_to_key[i].key_idx, 0));
+        }
+
+        if (IsKeyReleased(char_to_key[i].keyboard)) {
+            voice_release_key(&g_a.s.gui_params.voice_arr, KEY_IN_OCTAVE(char_to_key[i].key_idx, 0));
+
+            log_info("Released key %d %d", char_to_key[i].keyboard, KEY_IN_OCTAVE(char_to_key[i].key_idx, 0));
         }
     }
 }
@@ -645,6 +709,7 @@ void process_ui() {
         break;
     case TAB_KEYS:
         process_synth_keyboard();
+        process_synth_mouse();
         break;
     case TAB_EFFECTS:
       break;

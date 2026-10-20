@@ -885,10 +885,12 @@ static bool process_tkeyboard(int* c) {
     for (size_t i = 0; i < ARRAY_SIZE(tk_key_matr); i++) {
         int x = center_off_x + tk_line_off_arr[i];
         int y = screen_h - size_h + i * (TKEY_SIZE_H + TKEY_GAP) + TKEY_GAP;
+
         for (size_t j = 0; j < tk_key_arr_size_arr[i]; j++) {
             Rectangle rec = {x, y, tk_key_size_w_matr[i][j], TKEY_SIZE_H};
             bool hovered = CheckCollisionPointRec(m_pos, rec);
-            bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovered;
+
+            bool clicked = IsKeyPressed(tk_key_matr[i][j]) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && hovered;
 
             if (clicked) {
                 *c = tk_key_matr[i][j];
