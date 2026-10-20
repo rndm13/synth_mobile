@@ -124,7 +124,7 @@ void osc_voice_add(OscVoiceArr *ov, Voice v, size_t unison_idx, size_t start_idx
         wave_idx = rand() % wave_length;
     }
 
-    osc_voice_set(ov, ov->osc_voice_count, v, 0, wave_idx, start_idx);
+    osc_voice_set(ov, ov->osc_voice_count, v, unison_idx, wave_idx, start_idx);
     ov->osc_voice_count++;
 }
 

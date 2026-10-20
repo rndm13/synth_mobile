@@ -114,23 +114,23 @@ void synth_update_voice_arr(const SynthParams* p, SynthState* s) {
     }
 }
 
-void update_osc_voice(SynthState* s, const OscParams* params, Env* env, OscVoice* osc_voice, float wave_freq) {
-    Voice voice = osc_voice->voice;
-
-    float vel_mul = (float)voice.velocity / MAX_VELOCITY;
+static
+void update_osc_voice(SynthState* s, const OscParams* params, Env* env, OscVoice* osc_voice, float wave_freq, float wave_amp) {
     float env_val = 1.0f;
+    int wave_idx = 0;
+    int wave_length = 0;
 
     for (int j = 0; j < s->sample_buffer_size; j++) {
-        int wave_length = SAMPLE_RATE / wave_freq;
-        double dt = j / (float)SAMPLE_RATE;
-        float osc_value = calc_osc_value(params->type, osc_voice->wave_idx, wave_length);
+        wave_length = SAMPLE_RATE / wave_freq;
+        wave_idx = (int)(osc_voice->wave_idx + params->phase * wave_length) % wave_length;
+        float osc_value = calc_osc_value(params->type, wave_idx, wave_length);
 
         env_val = calc_env_value(s->sample_idx + j, env, osc_voice);
         if (osc_voice->released && FloatEquals(env_val, 0)) {
             osc_voice->dead = true;
         }
 
-        s->sample_buffer[j] += params->volume * env_val * vel_mul * osc_value;
+        s->sample_buffer[j] += env_val * wave_amp * osc_value;
         osc_voice->wave_idx = (osc_voice->wave_idx + 1) % wave_length;
     }
 }
@@ -138,25 +138,31 @@ void update_osc_voice(SynthState* s, const OscParams* params, Env* env, OscVoice
 void update_osc(SynthState* s, const OscParams* params, OscState* osc, Env* env) {
     OscVoiceArr *ova = &osc->voice_arr;
     OscVoice *osc_voice = NULL;
-    Voice voice = {};
-    float wave_freq = 0;
-    float detune_mul = 0;
-    float detune_offset = 0;
-    float cents_mul = 0;
-    float semi_mul = 0;
-    int e = 0;
+    float wave_freq = 0.0f;
+    float detune_mul = 0.0f;
+    float unison_offset = 0.0f;
+    float cents_mul = 0.0f;
+    float semi_mul = 0.0f;
+    float spread_mul = 0.0f;
+    float vel_mul = 0.0f;
+    float amp = 0.0f;
 
     for (int v = 0; v < ova->osc_voice_count; v++) {
         osc_voice = &ova->osc_voice_arr[v];
-        voice = osc_voice->voice;
 
-        detune_offset = osc_voice->unison_idx - (params->unison - 1) / 2.0;
-        detune_mul = calc_cents_mul(params->detune * detune_offset);
+        unison_offset = osc_voice->unison_idx - (params->unison - 1) / 2.0;
+        detune_mul = calc_cents_mul(params->detune * unison_offset);
+        spread_mul = (-fabs(unison_offset / params->unison) + 1) * params->spread / 2 + 0.5;
+
         cents_mul = calc_cents_mul(params->cents);
         semi_mul = calc_semi_mul(params->semi);
 
-        wave_freq = voice.freq * cents_mul * semi_mul * detune_mul;
-        update_osc_voice(s, params, env, osc_voice, wave_freq);
+        vel_mul = (float)osc_voice->voice.velocity / MAX_VELOCITY;
+
+        amp = params->volume * vel_mul * spread_mul;
+        wave_freq = osc_voice->voice.freq * cents_mul * semi_mul * detune_mul;
+
+        update_osc_voice(s, params, env, osc_voice, wave_freq, amp);
     }
 }
 

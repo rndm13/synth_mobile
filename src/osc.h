@@ -21,9 +21,11 @@ typedef struct OscParams {
     int semi;
     int cents;
     float volume;
+    float phase;
 
     int unison;
     int detune;
+    float spread;
 } OscParams;
 
 typedef struct OscState {

@@ -481,12 +481,16 @@ void draw_tab_osc(Vector2* cursor_p) {
 
         draw_knob_i("Cents", &split_cursor_p, &params->cents, -OSC_CENTS_RANGE, OSC_CENTS_RANGE, NULL);
 
+        draw_knob("Phase", &split_cursor_p, &params->phase, 0.0f, 1.0f, NULL);
+
         draw_toggle("Rand Phase", &split_cursor_p, &params->rand_phase, NULL);
 
         split_cursor_p = cursor_p_r2;
         draw_knob_i("Unison", &split_cursor_p, &params->unison, OSC_UNISON_MIN, OSC_UNISON_MAX, NULL);
 
         draw_knob_i("Detune", &split_cursor_p, &params->detune, OSC_DETUNE_MIN, OSC_DETUNE_MAX, NULL);
+
+        draw_knob("Spread", &split_cursor_p, &params->spread, 0.0f, 1.0f, NULL);
 
         draw_knob("Volume", &split_cursor_p, &params->volume, 0.0f, 1.0f, NULL);
 
@@ -534,10 +538,6 @@ void draw_tab_env(Vector2* cursor_p) {
 
     split_cursor_p.x = cursor_p->x + wave_s.x + GUI_GAP;
     split_cursor_p.y = cursor_p->y + wave_s.y + GUI_GAP;
-
-    // draw_wave(
-    //         "ENV0 Wave", &split_cursor_p, wave_s,
-    //         g_a.s.env_disp_buffer_arr[0], DISPLAY_BUFFER_SIZE, 0);
 }
 
 void draw_tab_filter(Vector2* cursor_p) {
@@ -561,7 +561,6 @@ void draw_tab_filter(Vector2* cursor_p) {
     set_gui_dir(GD_HORIZONTAL);
     changed |= draw_knob("Resonance", cursor_p, &params->resonance, FLT_RESONANCE_MIN, FLT_RESONANCE_MAX, NULL);
     changed |= draw_knob("Gain", cursor_p, &params->gain, FLT_GAIN_MIN, FLT_GAIN_MAX, NULL);
-    changed |= draw_knob("ENV2 Intensity", cursor_p, &params->env2_int, FLT_INT_MIN, FLT_INT_MAX, NULL);
 
     if (changed) {
         prepare_filter_display(&g_a.s.gui_params.flt, g_a.s.flt_disp_buffer);
